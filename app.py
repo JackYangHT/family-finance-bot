@@ -75,7 +75,7 @@ def handle_text_message(event):
     """
     
     chat_completion = di_client.chat.completions.create(
-        model="NousResearch/Hermes-3-Llama-3.1-8B",
+        model="meta-llama/Llama-3.1-8B-Instruct",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
