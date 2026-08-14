@@ -275,7 +275,7 @@ def handle_image(event):
             img_bytes.write(chunk)
         base64_image = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
-        # Taiwan Tax Engine VLM Prompt
+        # Taiwan Tax Engine VLM Prompt (Qwen3-VL)
         tax_prompt = """
         Extract Taiwan Salary Slip data. Output strictly JSON with these keys:
         {
@@ -294,7 +294,7 @@ def handle_image(event):
         """
 
         response = di_client.chat.completions.create(
-            model="Qwen/Qwen2.5-VL-72B-Instruct",
+            model="Qwen/Qwen3-VL-30B-A3B-Instruct",  # Updated from Qwen2.5-VL-72B
             messages=[{
                 "role": "user",
                 "content": [
