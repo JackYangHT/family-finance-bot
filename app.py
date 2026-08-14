@@ -270,7 +270,7 @@ def handle_image(event):
         """
         
         classifier = di_client.chat.completions.create(
-            model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+            model="Qwen/Qwen3-VL-30B-A3B-Instruct",  # MUST use vision model for images!
             messages=[{
                 "role": "user",
                 "content": [
