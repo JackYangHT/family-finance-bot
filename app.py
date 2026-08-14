@@ -275,87 +275,175 @@ def handle_image(event):
             img_bytes.write(chunk)
         base64_image = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
-        # Taiwan Tax Engine VLM Prompt (Qwen3-VL)
-        tax_prompt = """
-        Extract Taiwan Salary Slip data. Output strictly JSON with these keys:
-        {
-          "person": "Jack"|"Lee"|"Unknown",
-          "pay_period": "YYYY-MM",
-          "gross_pay": number,
-          "withholding_tax": number,
-          "nhi_premium": number,
-          "labor_insurance": number,
-          "employment_insurance": number,
-          "pension_voluntary_6": number,
-          "meal_allowance": number,
-          "other_deductions": number,
-          "net_pay": number
-        }
+        # Smart Image Classifier - First determine if it's a salary slip or expense receipt
+        classifier_prompt = """
+        Analyze this image. Is it a SALARY SLIP/PAYROLL document or an EXPENSE RECEIPT?
+        
+        SALARY SLIP indicators: employee name, gross pay, withholding tax, NHI, pension, net pay, pay period
+        EXPENSE RECEIPT indicators: store name, items, total amount, date, receipt number
+        
+        Reply with ONLY one word: "SALARY" or "RECEIPT"
         """
-
-        response = di_client.chat.completions.create(
-            model="Qwen/Qwen3-VL-30B-A3B-Instruct",  # Updated from Qwen2.5-VL-72B
+        
+        classifier = di_client.chat.completions.create(
+            model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": tax_prompt},
+                    {"type": "text", "text": classifier_prompt},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                 ]
             }]
         )
         
-        raw_json = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
-        data = json.loads(raw_json)
-
-        if gc:
-            # Log to Raw_Income sheet
-            inc_sheet = sh.worksheet("Raw_Income")
-            inc_sheet.append_row([
-                timestamp,                      # Timestamp
-                data.get("person", "Unknown"),  # Person
-                "Salary",                       # Type
-                data.get("gross_pay", 0),       # Gross Amount
-                data.get("withholding_tax", 0), # Withholding Tax
-                data.get("nhi_premium", 0),     # NHI
-                data.get("labor_insurance", 0), # Labor Ins
-                data.get("pension_voluntary_6", 0), # Pension 6%
-                data.get("meal_allowance", 0),  # Meal Allowance
-                data.get("other_deductions", 0),# Other Deductions
-                data.get("net_pay", 0),         # Net Pay
-                "Pending Refund",               # Tax Refund Status
-                f"LINE:{event.message.id}"      # Source Document
-            ])
-            
-            # Bilingual reply
-            if who_spent == "prapa.yang":
-                reply = (
-                    f"📄 **บันทึกสลิปเงินเดือนแล้ว!**\n"
-                    f"• ผู้รับ: {data.get('person', 'ไม่ทราบ')}\n"
-                    f"• เงินเดือนรวม: {data.get('gross_pay', 0):,} บาท\n"
-                    f"• ภาษีหัก ณ ที่จ่าย (扣繳): {data.get('withholding_tax', 0):,} บาท\n"
-                    f"• กองทุนสำรองเลี้ยงชีพ (勞退自提): {data.get('pension_voluntary_6', 0):,} บาท\n"
-                    f"• เงินได้รับจริง: {data.get('net_pay', 0):,} บาท\n\n"
-                    f"💡 ภาษีที่จ่ายล่วงหน้า จะถูกบันทึกเพื่อคืนภาษีในเดือนพฤษภาคม!"
-                )
-            else:
-                reply = (
-                    f"📄 **Payroll & Tax Slip Logged!**\n"
-                    f"• Person: {data.get('person', 'Unknown')}\n"
-                    f"• Gross Pay: TWD {data.get('gross_pay', 0):,}\n"
-                    f"• Pre-paid Tax (扣繳): TWD {data.get('withholding_tax', 0):,}\n"
-                    f"• Tax-Free Pension (勞退自提): TWD {data.get('pension_voluntary_6', 0):,}\n"
-                    f"• Net Deposit: TWD {data.get('net_pay', 0):,}\n\n"
-                    f"💡 Prepaid tax recorded for next May's tax refund!"
-                )
-        else:
-            reply = "⚠️ Google Sheets not reachable."
+        image_type = classifier.choices[0].message.content.strip().upper()
         
-        log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {data.get('gross_pay', 0)}", "Logged to Raw_Income", "success")
+        # ROUTE 1: It's a SALARY SLIP - Extract Taiwan tax data
+        if "SALARY" in image_type:
+            tax_prompt = """
+            Extract Taiwan Salary Slip data. Output strictly JSON with these keys:
+            {
+              "person": "Jack"|"Lee"|"Unknown",
+              "pay_period": "YYYY-MM",
+              "gross_pay": number,
+              "withholding_tax": number,
+              "nhi_premium": number,
+              "labor_insurance": number,
+              "employment_insurance": number,
+              "pension_voluntary_6": number,
+              "meal_allowance": number,
+              "other_deductions": number,
+              "net_pay": number
+            }
+            """
+
+            response = di_client.chat.completions.create(
+                model="Qwen/Qwen3-VL-30B-A3B-Instruct",
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": tax_prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }]
+            )
+            
+            raw_json = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
+            data = json.loads(raw_json)
+            
+            # VALIDATION: Skip if all zeros or invalid
+            if data.get("gross_pay", 0) == 0 and data.get("net_pay", 0) == 0:
+                reply = "⚠️ Could not extract salary slip data. Please ensure the image is clear and shows payroll details."
+                log_chat(user_id, who_spent, "image", "Salary Slip (invalid)", "", "Rejected - invalid data", "failed")
+            else:
+                if gc:
+                    # Log to Raw_Income sheet
+                    inc_sheet = sh.worksheet("Raw_Income")
+                    inc_sheet.append_row([
+                        timestamp,                      # Timestamp
+                        data.get("person", "Unknown"),  # Person
+                        "Salary",                       # Type
+                        data.get("gross_pay", 0),       # Gross Amount
+                        data.get("withholding_tax", 0), # Withholding Tax
+                        data.get("nhi_premium", 0),     # NHI
+                        data.get("labor_insurance", 0), # Labor Ins
+                        data.get("pension_voluntary_6", 0), # Pension 6%
+                        data.get("meal_allowance", 0),  # Meal Allowance
+                        data.get("other_deductions", 0),# Other Deductions
+                        data.get("net_pay", 0),         # Net Pay
+                        "Pending Refund",               # Tax Refund Status
+                        f"LINE:{event.message.id}"      # Source Document
+                    ])
+                    
+                    # Bilingual reply
+                    if who_spent == "prapa.yang":
+                        reply = (
+                            f"📄 **บันทึกสลิปเงินเดือนแล้ว!**\n"
+                            f"• ผู้รับ: {data.get('person', 'ไม่ทราบ')}\n"
+                            f"• เงินเดือนรวม: {data.get('gross_pay', 0):,} บาท\n"
+                            f"• ภาษีหัก ณ ที่จ่าย (扣缴): {data.get('withholding_tax', 0):,} บาท\n"
+                            f"• กองทุนสำรองเลี้ยงชีพ (勞退自提): {data.get('pension_voluntary_6', 0):,} บาท\n"
+                            f"• เงินได้รับจริง: {data.get('net_pay', 0):,} บาท\n\n"
+                            f"💡 ภาษีที่จ่ายล่วงหน้า จะถูกบันทึกเพื่อคืนภาษีในเดือนพฤษภาคม!"
+                        )
+                    else:
+                        reply = (
+                            f"📄 **Payroll & Tax Slip Logged!**\n"
+                            f"• Person: {data.get('person', 'Unknown')}\n"
+                            f"• Gross Pay: TWD {data.get('gross_pay', 0):,}\n"
+                            f"• Pre-paid Tax (扣缴): TWD {data.get('withholding_tax', 0):,}\n"
+                            f"• Tax-Free Pension (勞退自提): TWD {data.get('pension_voluntary_6', 0):,}\n"
+                            f"• Net Deposit: TWD {data.get('net_pay', 0):,}\n\n"
+                            f"💡 Prepaid tax recorded for next May's tax refund!"
+                        )
+                    log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {data.get('gross_pay', 0)}", "Logged to Raw_Income", "success")
+                else:
+                    reply = "⚠️ Google Sheets not reachable."
+                    log_chat(user_id, who_spent, "image", "Salary Slip", "", "Failed - Sheets offline", "failed")
+        
+        # ROUTE 2: It's an EXPENSE RECEIPT - Extract amount and vendor
+        else:
+            expense_prompt = """
+            Extract expense receipt data. Output strictly JSON:
+            {
+              "vendor": "store name",
+              "amount": number,
+              "items": ["item1", "item2"]
+            }
+            """
+            
+            response = di_client.chat.completions.create(
+                model="Qwen/Qwen3-VL-30B-A3B-Instruct",
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": expense_prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }]
+            )
+            
+            raw_json = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
+            data = json.loads(raw_json)
+            
+            amount = data.get("amount", 0)
+            vendor = data.get("vendor", "Unknown")
+            items = ", ".join(data.get("items", []))
+            
+            if amount > 0:
+                if gc:
+                    # Log to Raw_Expenses sheet
+                    exp_sheet = sh.worksheet("Raw_Expenses")
+                    exp_sheet.append_row([
+                        timestamp,
+                        who_spent,
+                        "Food",  # Default category for receipt images
+                        amount,
+                        f"{vendor} - {items}",
+                        "LINE",
+                        "Yes",  # Has receipt
+                        "No",   # Not tax deductible
+                        f"Receipt image: {vendor}",
+                        event.source.user_id if hasattr(event.source, 'user_id') else "group"
+                    ])
+                    
+                    if who_spent == "prapa.yang":
+                        reply = f"✅ บันทึกรายการแล้ว:\n• ร้านค้า: {vendor}\n• จำนวน: {amount:,} บาท\n• รายการ: {items}\n• หมวดหมู่: อาหาร"
+                    else:
+                        reply = f"✅ Expense Logged:\n• Vendor: {vendor}\n• Amount: TWD {amount:,}\n• Items: {items}\n• Category: Food"
+                    
+                    log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", f"{amount} TWD", "Logged to Raw_Expenses", "success")
+                else:
+                    reply = "⚠️ Google Sheets not reachable."
+            else:
+                reply = "📷 Receipt received but couldn't extract amount. Please type manually: 'vendor amount'"
+                log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", "", "Failed - no amount", "partial")
         
     except Exception as e:
-        reply = f"⚠️ Vision processing failed: {str(e)}"
-        log_chat(user_id, who_spent, "image", "Salary Slip", "", f"Error: {e}", "failed")
+        reply = f"⚠️ Image processing failed: {str(e)}"
+        log_chat(user_id, who_spent, "image", "Unknown", "", f"Error: {e}", "failed")
 
+    # Send ONLY ONE reply (no duplicates)
     line_bot_api.push_message(user_id, TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)))
 
 # =============================================================================
