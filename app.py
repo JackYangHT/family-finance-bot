@@ -176,18 +176,9 @@ def handle_text(event):
         log_chat(user_id, who_spent, "text", text, "Dashboard summary", "Balance check", "success")
         return
 
-    # Categorization Processing (Supports English & Thai)
+    # Categorization Processing (Supports English, Thai, Chinese)
     system_prompt = """
-    Categorize the expenditure message into JSON. Support both English and Thai input.
-    
-    For Thai, map categories to:
-    - "Family Petty Cash" = "ค่าใช้จ่ายครอบครัว"
-    - "Personal" = "ส่วนตัว"
-    - "Urgent" = "เร่งด่วน"
-    - "Food" = "อาหาร"
-    - "Transport" = "การเดินทาง"
-    - "Medical" = "การรักษาพยาบาล"
-    - "General" = "ทั่วไป"
+    Categorize the expenditure message into JSON. Support English, Thai, and Chinese input.
     
     Output strictly valid JSON:
     {"category": "Family Petty Cash"|"Personal"|"Urgent"|"Food"|"Transport"|"Medical"|"General", "amount": number, "vendor": "string"}
@@ -218,31 +209,24 @@ def handle_text(event):
                 "LINE",         # Payment Method
                 "No",           # Receipt?
                 "No",           # Tax Deductible?
-                text,           # Raw Input (EN/TH)
-                event.source.user_id  # Chat Log ID
+                text,           # Raw Input (EN/TH/ZH)
+                event.source.user_id if hasattr(event.source, 'user_id') else "group"  # Chat Log ID
             ])
             
-            # Bilingual reply
+            # Concise trilingual reply - result only
             if who_spent == "prapa.yang":
-                thai_category = {
-                    "Family Petty Cash": "ค่าใช้จ่ายครอบครัว",
-                    "Personal": "ส่วนตัว",
-                    "Urgent": "เร่งด่วน",
-                    "Food": "อาหาร",
-                    "Transport": "การเดินทาง",
-                    "Medical": "การรักษาพยาบาล",
-                    "General": "ทั่วไป"
-                }.get(category, category)
-                reply = f"✅ บันทึกข้อมูลแล้ว:\n• หมวดหมู่: {thai_category}\n• จำนวน: {amount:,} บาท\n• หมายเหตุ: {vendor}\n• ผู้จ่าย: {who_spent}"
+                reply = f"✅ บันทึกแล้ว: {category} {amount:,} บาท - {vendor}"
+            elif who_spent == "jack.yang":
+                reply = f"✅ Logged: {category} TWD {amount:,} - {vendor}"
             else:
-                reply = f"✅ Logged Expense:\n• Category: {category}\n• Amount: TWD {amount:,}\n• Note: {vendor}\n• Spent by: {who_spent}"
+                reply = f"✅ 已记录：{category} {amount:,} 元 - {vendor}"
         else:
-            reply = f"⚠️ Config error, parsed: {category} TWD {amount}"
+            reply = "⚠️ Database offline"
         
         log_chat(user_id, who_spent, "text", text, f"{category} {amount}", "Logged to Raw_Expenses", "success")
         
     except Exception as e:
-        reply = f"📝 Logged input: '{text}'. Use standard format (e.g., '7/11 250')."
+        reply = f"📝 {text}"
         log_chat(user_id, who_spent, "text", text, "", f"Parse error: {e}", "partial")
 
     line_bot_api.push_message(user_id, TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)))
@@ -333,7 +317,7 @@ def handle_image(event):
             
             # VALIDATION: Skip if all zeros or invalid
             if data.get("gross_pay", 0) == 0 and data.get("net_pay", 0) == 0:
-                reply = "⚠️ Could not extract salary slip data. Please ensure the image is clear and shows payroll details."
+                reply = "⚠️ ไม่สามารถอ่านสลิปได้ กรุณาถ่ายภาพใหม่"
                 log_chat(user_id, who_spent, "image", "Salary Slip (invalid)", "", "Rejected - invalid data", "failed")
             else:
                 if gc:
@@ -355,30 +339,22 @@ def handle_image(event):
                         f"LINE:{event.message.id}"      # Source Document
                     ])
                     
-                    # Bilingual reply
+                    # Concise trilingual reply
+                    person = data.get("person", "Unknown")
+                    gross = f"{data.get('gross_pay', 0):,}"
+                    net = f"{data.get('net_pay', 0):,}"
+                    tax = f"{data.get('withholding_tax', 0):,}"
+                    
                     if who_spent == "prapa.yang":
-                        reply = (
-                            f"📄 **บันทึกสลิปเงินเดือนแล้ว!**\n"
-                            f"• ผู้รับ: {data.get('person', 'ไม่ทราบ')}\n"
-                            f"• เงินเดือนรวม: {data.get('gross_pay', 0):,} บาท\n"
-                            f"• ภาษีหัก ณ ที่จ่าย (扣缴): {data.get('withholding_tax', 0):,} บาท\n"
-                            f"• กองทุนสำรองเลี้ยงชีพ (勞退自提): {data.get('pension_voluntary_6', 0):,} บาท\n"
-                            f"• เงินได้รับจริง: {data.get('net_pay', 0):,} บาท\n\n"
-                            f"💡 ภาษีที่จ่ายล่วงหน้า จะถูกบันทึกเพื่อคืนภาษีในเดือนพฤษภาคม!"
-                        )
+                        reply = f"📄 บันทึกสลิปแล้ว: {person} รวม {gross} บาท ได้จริง {net} บาท (หักภาษี {tax} บาท)"
+                    elif who_spent == "jack.yang":
+                        reply = f"📄 Salary logged: {person} Gross {gross} TWD Net {net} TWD (Tax {tax} TWD)"
                     else:
-                        reply = (
-                            f"📄 **Payroll & Tax Slip Logged!**\n"
-                            f"• Person: {data.get('person', 'Unknown')}\n"
-                            f"• Gross Pay: TWD {data.get('gross_pay', 0):,}\n"
-                            f"• Pre-paid Tax (扣缴): TWD {data.get('withholding_tax', 0):,}\n"
-                            f"• Tax-Free Pension (勞退自提): TWD {data.get('pension_voluntary_6', 0):,}\n"
-                            f"• Net Deposit: TWD {data.get('net_pay', 0):,}\n\n"
-                            f"💡 Prepaid tax recorded for next May's tax refund!"
-                        )
-                    log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {data.get('gross_pay', 0)}", "Logged to Raw_Income", "success")
+                        reply = f"📄 薪资已记录：{person} 总额 {gross} 元 实发 {net} 元 (扣税 {tax} 元)"
+                    
+                    log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {gross}", "Logged to Raw_Income", "success")
                 else:
-                    reply = "⚠️ Google Sheets not reachable."
+                    reply = "⚠️ Database offline"
                     log_chat(user_id, who_spent, "image", "Salary Slip", "", "Failed - Sheets offline", "failed")
         
         # ROUTE 2: It's an EXPENSE RECEIPT - Extract amount and vendor
@@ -427,16 +403,19 @@ def handle_image(event):
                         event.source.user_id if hasattr(event.source, 'user_id') else "group"
                     ])
                     
+                    # Concise trilingual reply
                     if who_spent == "prapa.yang":
-                        reply = f"✅ บันทึกรายการแล้ว:\n• ร้านค้า: {vendor}\n• จำนวน: {amount:,} บาท\n• รายการ: {items}\n• หมวดหมู่: อาหาร"
+                        reply = f"✅ บันทึกใบเสร็จแล้ว: {vendor} {amount:,} บาท"
+                    elif who_spent == "jack.yang":
+                        reply = f"✅ Receipt logged: {vendor} TWD {amount:,}"
                     else:
-                        reply = f"✅ Expense Logged:\n• Vendor: {vendor}\n• Amount: TWD {amount:,}\n• Items: {items}\n• Category: Food"
+                        reply = f"✅ 收据已记录：{vendor} {amount:,} 元"
                     
                     log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", f"{amount} TWD", "Logged to Raw_Expenses", "success")
                 else:
-                    reply = "⚠️ Google Sheets not reachable."
+                    reply = "⚠️ Database offline"
             else:
-                reply = "📷 Receipt received but couldn't extract amount. Please type manually: 'vendor amount'"
+                reply = "📷 ไม่สามารถอ่านจำนวนเงน กรุณาพิมพ์เอง: 'ร้านค้า จำนวน'"
                 log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", "", "Failed - no amount", "partial")
         
     except Exception as e:
