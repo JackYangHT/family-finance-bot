@@ -118,7 +118,14 @@ async def callback(request: Request):
 def handle_text(event):
     text = event.message.text.strip()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    user_id = event.source.user_id
+    
+    # Handle both 1-on-1 chats and group chats
+    if hasattr(event.source, 'user_id') and event.source.user_id:
+        # 1-on-1 chat or user in group
+        user_id = event.source.user_id
+    else:
+        # Group chat without user context - use group ID as fallback
+        user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
     # Determine user name from prefix or fallback
     who_spent = "jack.yang"  # Default
@@ -129,7 +136,7 @@ def handle_text(event):
         who_spent = "prapa.yang"
         text = text.replace("prapa.yang", "", 1).strip()
     else:
-        # Try to map LINE user ID (update with real IDs later)
+        # Try to map LINE user IDs to names (update with real IDs)
         FAMILY_MEMBERS = {
             "YOUR_LINE_USER_ID": "jack.yang",
             "LEE_LINE_USER_ID": "prapa.yang"
@@ -246,7 +253,12 @@ def handle_text(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    user_id = event.source.user_id
+    
+    # Handle both 1-on-1 chats and group chats
+    if hasattr(event.source, 'user_id') and event.source.user_id:
+        user_id = event.source.user_id
+    else:
+        user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
     who_spent = "jack.yang"
     FAMILY_MEMBERS = {
