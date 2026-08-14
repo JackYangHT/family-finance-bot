@@ -30,6 +30,9 @@ LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 DEEPINFRA_API_KEY = os.environ.get("DEEPINFRA_API_KEY", "")
 SPREADSHEET_ID = "1T4uP-1WInBLJ5ulSMGGtVBJuDR0GyGR-tngwxLw8KJY"
 
+# Deduplication cache - track processed message IDs (last 5 minutes)
+processed_messages = {}
+
 # Google Sheets Auth
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 try:
@@ -116,6 +119,18 @@ async def callback(request: Request):
 # =============================================================================
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
+    # DEDUPLICATION: Skip if already processed this message ID
+    msg_id = event.message.id
+    if msg_id in processed_messages:
+        print(f"⚠️ Skipping duplicate text message: {msg_id}")
+        return "OK"
+    processed_messages[msg_id] = datetime.now()
+    
+    # Clean old entries (older than 5 minutes)
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(minutes=5)
+    processed_messages = {k: v for k, v in processed_messages.items() if v > cutoff}
+    
     text = event.message.text.strip()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -236,6 +251,18 @@ def handle_text(event):
 # =============================================================================
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
+    # DEDUPLICATION: Skip if already processed this message ID
+    msg_id = event.message.id
+    if msg_id in processed_messages:
+        print(f"⚠️ Skipping duplicate message: {msg_id}")
+        return "OK"
+    processed_messages[msg_id] = datetime.now()
+    
+    # Clean old entries (older than 5 minutes)
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(minutes=5)
+    processed_messages = {k: v for k, v in processed_messages.items() if v > cutoff}
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Handle both 1-on-1 chats and group chats
