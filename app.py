@@ -174,21 +174,67 @@ def handle_text(event):
         if gc:
             try:
                 dash = sh.worksheet("Dashboard_Summary")
-                vals = dash.get("A1:B19")
+                # Get ACTUAL VALUES not formulas!
+                vals = dash.get_values(value_render_option='FORMATTED_VALUE')
+                
+                # Extract key metrics (handle empty/missing cells)
+                def get_val(row_idx, col_idx=1):
+                    if row_idx < len(vals) and col_idx < len(vals[row_idx]):
+                        val = vals[row_idx][col_idx]
+                        return val if val else "0"
+                    return "0"
+                
+                income_ytd = get_val(2)      # Row 3 (0-indexed: 2)
+                prepaid_tax = get_val(3)     # Row 4
+                net_income = get_val(5)      # Row 6
+                expenses_ytd = get_val(6)    # Row 7
+                family_cash = get_val(7)     # Row 8
+                personal_exp = get_val(8)    # Row 9
+                urgent_exp = get_val(9)      # Row 10
+                food_exp = get_val(10)       # Row 11
+                net_savings = get_val(14)    # Row 15
+                savings_rate = get_val(15)   # Row 16
+                
                 if who_spent == "prapa.yang":
-                    msg = "📊 **ยอดคงเหลือครอบครัวหยาง**\n\n"
-                    for row in vals[2:]:
-                        if len(row) >= 2 and row[0]:
-                            msg += f"• {row[0]}: {row[1]} บาท\n"
+                    # 100% Thai - Mobile-friendly concise format
+                    msg = (
+                        f"📊 **ยอดคงเหลอครอบครัวหยาง**\n\n"
+                        f"💰 รายได้รวม: {income_ytd} บ.\n"
+                        f"💵 เงินได้จริง: {net_income} บ.\n"
+                        f"📊 รายจายรวม: {expenses_ytd} บ.\n"
+                        f"─────────────────\n"
+                        f"💰 เงินออมสทธ: {net_savings} บ.\n"
+                        f"📈 อตราเงินออม: {savings_rate}%\n\n"
+                        f"🏠 ค่าใชจายครอบครัว: {family_cash} บ.\n"
+                        f"🧍 ค่าใชจายสวนตัว: {personal_exp} บ.\n"
+                        f"🚨 ค่าใชจายเรงด่วน: {urgent_exp} บ.\n"
+                        f"🍽️ อาหาร: {food_exp} บ."
+                    )
                 else:
-                    msg = "📊 **YANG FAMILY FINANCIAL DASHBOARD**\n\n"
-                    for row in vals[2:]:
-                        if len(row) >= 2 and row[0]:
-                            msg += f"• {row[0]}: TWD {row[1]}\n"
+                    # English version
+                    msg = (
+                        f"📊 **YANG FAMILY DASHBOARD**\n\n"
+                        f"💰 Total Income: {income_ytd} TWD\n"
+                        f"💵 Net Income: {net_income} TWD\n"
+                        f"📊 Total Expenses: {expenses_ytd} TWD\n"
+                        f"─────────────────\n"
+                        f"💰 Net Savings: {net_savings} TWD\n"
+                        f"📈 Savings Rate: {savings_rate}%\n\n"
+                        f"🏠 Family Cash: {family_cash} TWD\n"
+                        f"🧍 Personal: {personal_exp} TWD\n"
+                        f"🚨 Urgent: {urgent_exp} TWD\n"
+                        f"🍽️ Food: {food_exp} TWD"
+                    )
             except Exception as e:
-                msg = f"⚠️ Error reading dashboard: {str(e)}"
+                if who_spent == "prapa.yang":
+                    msg = f"⚠️ เกิดข้ดพลาด: {str(e)}"
+                else:
+                    msg = f"⚠️ Error reading dashboard: {str(e)}"
         else:
-            msg = "⚠️ Database connection offline."
+            if who_spent == "prapa.yang":
+                msg = "⚠️ ฐานข้อมูลไมสามารถเช่อมต่อได้"
+            else:
+                msg = "⚠️ Database connection offline."
         line_bot_api.push_message(user_id, TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)))
         log_chat(user_id, who_spent, "text", text, "Dashboard summary", "Balance check", "success")
         return
