@@ -119,6 +119,8 @@ async def callback(request: Request):
 # =============================================================================
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
+    global processed_messages  # MUST declare global to modify it!
+    
     # DEDUPLICATION: Skip if already processed this message ID
     msg_id = event.message.id
     if msg_id in processed_messages:
@@ -251,10 +253,12 @@ def handle_text(event):
 # =============================================================================
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
+    global processed_messages  # MUST declare global to modify it!
+    
     # DEDUPLICATION: Skip if already processed this message ID
     msg_id = event.message.id
     if msg_id in processed_messages:
-        print(f"⚠️ Skipping duplicate message: {msg_id}")
+        print(f"⚠️ Skipping duplicate image message: {msg_id}")
         return "OK"
     processed_messages[msg_id] = datetime.now()
     
