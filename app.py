@@ -142,7 +142,7 @@ def handle_text(event):
         # Group chat without user context - use group ID as fallback
         user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
-    # Determine user name from prefix or fallback
+    # Determine user name from prefix or auto-detect
     who_spent = "jack.yang"  # Default
     if text.startswith("jack.yang"):
         who_spent = "jack.yang"
@@ -151,12 +151,12 @@ def handle_text(event):
         who_spent = "prapa.yang"
         text = text.replace("prapa.yang", "", 1).strip()
     else:
-        # Try to map LINE user IDs to names (update with real IDs)
+        # Auto-detect from LINE User ID (update with real IDs when available)
         FAMILY_MEMBERS = {
-            "YOUR_LINE_USER_ID": "jack.yang",
-            "LEE_LINE_USER_ID": "prapa.yang"
+            "YOUR_LINE_USER_ID": "jack.yang",  # Replace with your real LINE ID
+            "LEE_LINE_USER_ID": "prapa.yang"   # Replace with Prapa's real LINE ID
         }
-        who_spent = FAMILY_MEMBERS.get(user_id, "jack.yang")
+        who_spent = FAMILY_MEMBERS.get(user_id, "prapa.yang")  # Default to prapa for unknown users
 
     # Command: Upload Salary Slip
     if text == "Upload Salary Slip":
@@ -273,10 +273,10 @@ def handle_image(event):
     
     who_spent = "jack.yang"
     FAMILY_MEMBERS = {
-        "YOUR_LINE_USER_ID": "jack.yang",
-        "LEE_LINE_USER_ID": "prapa.yang"
+        "YOUR_LINE_USER_ID": "jack.yang",  # Replace with your real LINE ID
+        "LEE_LINE_USER_ID": "prapa.yang"   # Replace with Prapa's real LINE ID
     }
-    who_spent = FAMILY_MEMBERS.get(user_id, "jack.yang")
+    who_spent = FAMILY_MEMBERS.get(user_id, "prapa.yang")  # Default to prapa for unknown users
     
     # Download Image from LINE
     try:
