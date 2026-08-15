@@ -67,11 +67,11 @@ di_client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url="https://api.deepinfra.co
 def get_quick_replies(user_name="jack.yang"):
     if user_name == "prapa.yang":
         return QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="💰 สลิปเงินเดือน", text="Upload Salary Slip")),
-            QuickReplyButton(action=MessageAction(label="🏠 ค่าใช้จ่ายครอบครัว", text="Category: Petty Cash")),
+            QuickReplyButton(action=MessageAction(label="💰 สลปเงนเดอน", text="Upload Salary Slip")),
+            QuickReplyButton(action=MessageAction(label="🏠 ค่าใชจายครอบครัว", text="Category: Petty Cash")),
             QuickReplyButton(action=MessageAction(label="🧍 ส่วนตัว", text="Category: Personal")),
-            QuickReplyButton(action=MessageAction(label="🚨 เร่งด่วน", text="Category: Urgent")),
-            QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลือ", text="Check Balance"))
+            QuickReplyButton(action=MessageAction(label="🚨 เรงด่วน", text="Category: Urgent")),
+            QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลอ", text="Check Balance"))
         ])
     else:
         return QuickReply(items=[
@@ -81,6 +81,25 @@ def get_quick_replies(user_name="jack.yang"):
             QuickReplyButton(action=MessageAction(label="🚨 Urgent", text="Category: Urgent")),
             QuickReplyButton(action=MessageAction(label="📊 Balance", text="Check Balance"))
         ])
+
+# Polite follow-up message (Thai/English bank call center style)
+def get_polite_followup(user_name="jack.yang", context="general"):
+    if user_name == "prapa.yang":
+        followups = {
+            "expense": "🙏 ขอบคณค่ะ ทานมีรายจ่ายอ่นๆ ต้องการบันทกเพ่มเตมไหมค๊ะ? พมพขอมูลเชน 'ร้านค้า จำนวน' ไดเลยค๊ะ",
+            "balance": "🙏 ขอบคณค่ะ ทานตองการทราบขอมูลเพ่มเตมดานไหนอีกไหมค๊ะ? ยินดใหบรการตลอด 24 ชั่โมงค๊ะ",
+            "salary": "🙏 ขอบคณค่ะ ทานมสลิปเงนเดอนของเดอนหนาทจะอัปโหลดไหมค๊ะ? หรอมีขอสงสยตองการถามเพ่มเตมไหมค๊ะ",
+            "general": "🙏 ขอบคณค่ะ ทานมีขอสงสยอ่นๆ หรอตองการบันทกรายจ่ายเพ่มเตมไหมค๊ะ? ยินดใหบรการค๊ะ"
+        }
+        return followups.get(context, followups["general"])
+    else:
+        followups = {
+            "expense": "🙏 Thank you! Would you like to log more expenses or check your balance?",
+            "balance": "🙏 Thank you! Would you like more details on any category or log new expenses?",
+            "salary": "🙏 Thank you! Do you have more salary slips to upload or any questions?",
+            "general": "🙏 Thank you! Any other questions or expenses to log today?"
+        }
+        return followups.get(context, followups["general"])
 
 # Log chat message to Chat_Logs sheet
 def log_chat(user_id, user_name, msg_type, raw_msg, ai_response, action, status):
@@ -232,10 +251,14 @@ def handle_text(event):
                     msg = f"⚠️ Error reading dashboard: {str(e)}"
         else:
             if who_spent == "prapa.yang":
-                msg = "⚠️ ฐานข้อมูลไมสามารถเช่อมต่อได้"
+                msg = "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
             else:
                 msg = "⚠️ Database connection offline."
-        line_bot_api.push_message(user_id, TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)))
+        line_bot_api.push_message(
+            user_id,
+            TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)),
+            TextSendMessage(text=get_polite_followup(who_spent, "balance"))
+        )
         log_chat(user_id, who_spent, "text", text, "Dashboard summary", "Balance check", "success")
         return
 
@@ -278,7 +301,7 @@ def handle_text(event):
             
             # Concise trilingual reply - result only
             if who_spent == "prapa.yang":
-                reply = f"✅ บันทึกแล้ว: {category} {amount:,} บาท - {vendor}"
+                reply = f"✅ บันทกแลว: {category} {amount:,} บาท - {vendor}"
             elif who_spent == "jack.yang":
                 reply = f"✅ Logged: {category} TWD {amount:,} - {vendor}"
             else:
@@ -292,7 +315,12 @@ def handle_text(event):
         reply = f"📝 {text}"
         log_chat(user_id, who_spent, "text", text, "", f"Parse error: {e}", "partial")
 
-    line_bot_api.push_message(user_id, TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)))
+    # Send main reply + polite follow-up (bank call center style)
+    line_bot_api.push_message(
+        user_id,
+        TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
+        TextSendMessage(text=get_polite_followup(who_spent, "expense"))
+    )
 
 # =============================================================================
 # 5. Vision Handler for Salary Slips (Taiwan Tax Compliance)
@@ -423,16 +451,24 @@ def handle_image(event):
                     tax = f"{data.get('withholding_tax', 0):,}"
                     
                     if who_spent == "prapa.yang":
-                        reply = f"📄 บันทึกสลิปแล้ว: {person} รวม {gross} บาท ได้จริง {net} บาท (หักภาษี {tax} บาท)"
+                        reply = f"📄 บันทกสลปแลว: {person} รวม {gross} บาท ไดจรง {net} บาท (หกภาษ {tax} บาท)"
                     elif who_spent == "jack.yang":
                         reply = f"📄 Salary logged: {person} Gross {gross} TWD Net {net} TWD (Tax {tax} TWD)"
                     else:
                         reply = f"📄 薪资已记录：{person} 总额 {gross} 元 实发 {net} 元 (扣税 {tax} 元)"
                     
                     log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {gross}", "Logged to Raw_Income", "success")
+                    
+                    # Send with polite follow-up
+                    line_bot_api.push_message(
+                        user_id,
+                        TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
+                        TextSendMessage(text=get_polite_followup(who_spent, "salary"))
+                    )
                 else:
                     reply = "⚠️ Database offline"
                     log_chat(user_id, who_spent, "image", "Salary Slip", "", "Failed - Sheets offline", "failed")
+                    line_bot_api.push_message(user_id, TextSendMessage(text=reply))
         
         # ROUTE 2: It's an EXPENSE RECEIPT - Extract amount and vendor
         else:
