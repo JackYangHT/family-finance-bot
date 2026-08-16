@@ -130,6 +130,8 @@ async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
     
+    print(f"🔔 WEBHOOK CALLED - Signature: {'YES' if signature else 'NO'}, Body length: {len(body)} bytes")
+    
     # Always return 200 for LINE - even if there are errors
     try:
         # LINE verification requests may not have signature
@@ -138,13 +140,17 @@ async def callback(request: Request):
             return PlainTextResponse(content="OK", status_code=200)
         
         # Process the webhook
+        print(f"📥 Processing webhook body: {body.decode('utf-8')[:200]}...")
         handler.handle(body.decode("utf-8"), signature)
+        print("✅ Handler processed successfully")
     except InvalidSignatureError:
         # Still return 200 - LINE will retry
         print(f"⚠️ Invalid LINE signature (will retry)")
     except Exception as e:
         # Catch ALL errors and return 200 anyway
         print(f"⚠️ Webhook handler error (returning 200 anyway): {e}")
+        import traceback
+        print(traceback.format_exc())
     
     # Always return 200 OK to LINE
     return PlainTextResponse(content="OK", status_code=200)
