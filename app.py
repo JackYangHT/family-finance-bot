@@ -125,17 +125,26 @@ def home():
 
 @app.post("/webhook")
 async def callback(request: Request):
-    from fastapi.responses import PlainTextResponse
+    from fastapi.responses import PlainTextResponse, JSONResponse
     
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
+    
+    # LINE sometimes sends verification requests without signature
+    if not signature:
+        print("ℹ️ Webhook called without signature (possibly verification)")
+        return PlainTextResponse(content="OK", status_code=200)
+    
     try:
         handler.handle(body.decode("utf-8"), signature)
     except InvalidSignatureError:
+        print(f"⚠️ Invalid LINE signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
         print(f"⚠️ Webhook error: {e}")
-        raise HTTPException(status_code=500, detail=f"Handler error: {str(e)}")
+        # Don't fail on handler errors - return 200 anyway
+        print(f"Handler processed with error: {str(e)}")
+    
     return PlainTextResponse(content="OK", status_code=200)
 
 # =============================================================================
