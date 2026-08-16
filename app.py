@@ -36,10 +36,12 @@ processed_messages = {}
 # Google Sheets Auth
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 try:
-    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    # Try Cloud Run path first (/app/credentials.json), then fallback to local
+    creds_path = "/app/credentials.json" if os.path.exists("/app/credentials.json") else "credentials.json"
+    creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    print("✅ Google Sheets connected")
+    print(f"✅ Google Sheets connected (credentials: {creds_path})")
 except Exception as e:
     print(f"⚠️ Google Sheets auth failed: {e}")
     gc = None
@@ -279,8 +281,10 @@ def handle_text(event):
                 msg = "⚠️ Database connection offline."
         line_bot_api.push_message(
             user_id,
-            TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)),
-            TextSendMessage(text=get_polite_followup(who_spent, "balance"))
+            [
+                TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)),
+                TextSendMessage(text=get_polite_followup(who_spent, "balance"))
+            ]
         )
         log_chat(user_id, who_spent, "text", text, "Dashboard summary", "Balance check", "success")
         return
@@ -341,8 +345,10 @@ def handle_text(event):
     # Send main reply + polite follow-up (bank call center style)
     line_bot_api.push_message(
         user_id,
-        TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
-        TextSendMessage(text=get_polite_followup(who_spent, "expense"))
+        [
+            TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
+            TextSendMessage(text=get_polite_followup(who_spent, "expense"))
+        ]
     )
 
 # =============================================================================
@@ -487,8 +493,10 @@ def handle_image(event):
                     # Send with polite follow-up
                     line_bot_api.push_message(
                         user_id,
-                        TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
-                        TextSendMessage(text=get_polite_followup(who_spent, "salary"))
+                        [
+                            TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
+                            TextSendMessage(text=get_polite_followup(who_spent, "salary"))
+                        ]
                     )
                 else:
                     reply = "⚠️ Database offline"
