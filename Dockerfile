@@ -18,7 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY setup_database.py .
-COPY credentials.json .
 
 # Expose port (Cloud Run uses PORT env variable, default 8080)
 ENV PORT=8080
