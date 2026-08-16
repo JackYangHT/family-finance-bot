@@ -125,13 +125,18 @@ def home():
 
 @app.post("/webhook")
 async def callback(request: Request):
+    from fastapi.responses import PlainTextResponse
+    
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
     try:
         handler.handle(body.decode("utf-8"), signature)
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
-    return "OK"
+    except Exception as e:
+        print(f"⚠️ Webhook error: {e}")
+        raise HTTPException(status_code=500, detail=f"Handler error: {str(e)}")
+    return PlainTextResponse(content="OK", status_code=200)
 
 # =============================================================================
 # 4. Text Message Handler (Expenses & Commands)
