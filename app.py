@@ -366,12 +366,14 @@ def handle_image(event):
     else:
         user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
-    who_spent = "jack.yang"
+    who_spent = "jack.yang"  # Default
+    # No prefix - use LINE User ID mapping (update with real IDs)
+    # To find your LINE User ID: send "jack.yang test" and check Cloud Run logs
     FAMILY_MEMBERS = {
-        "YOUR_LINE_USER_ID": "jack.yang",  # Replace with your real LINE ID
-        "LEE_LINE_USER_ID": "prapa.yang"   # Replace with Prapa's real LINE ID
+        "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "jack.yang",  # Replace with YOUR real LINE User ID
+        "Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy": "prapa.yang"  # Replace with Prapa's real LINE User ID
     }
-    who_spent = FAMILY_MEMBERS.get(user_id, "prapa.yang")  # Default to prapa for unknown users
+    who_spent = FAMILY_MEMBERS.get(user_id, "jack.yang")  # Default to jack.yang for unknown users
     
     # Download Image from LINE
     try:
