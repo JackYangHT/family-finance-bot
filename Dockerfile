@@ -18,10 +18,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY setup_database.py .
+COPY approval_workflow.py .
 
-# Expose port (Cloud Run sets PORT env variable)
+# Set default PORT (Cloud Run will override this)
 ENV PORT=8080
+
+# Expose port
 EXPOSE 8080
 
-# Run the application - use PORT from environment
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT"]
+# Run the application using shell format for env var expansion
+CMD exec uvicorn app:app --host 0.0.0.0 --port ${PORT}

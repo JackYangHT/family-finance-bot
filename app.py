@@ -46,19 +46,39 @@ FAMILY_MEMBERS = {
 # Deduplication cache
 processed_messages = {}
 
-# Google Sheets Auth
+# Google Sheets Auth - LAZY LOADING (defer until first use)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 gc = None
 sh = None
+sheets_initialized = False
 
-try:
-    creds_path = "/app/credentials.json" if os.path.exists("/app/credentials.json") else "credentials.json"
-    creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(SPREADSHEET_ID)
-    print(f"✅ Google Sheets connected ({creds_path})")
-except Exception as e:
-    print(f"⚠️ Google Sheets auth failed: {e}")
+def init_google_sheets():
+    """Initialize Google Sheets connection (called on first use)"""
+    global gc, sh, sheets_initialized
+    
+    if sheets_initialized:
+        return True
+    
+    try:
+        # Try Cloud Run path first (mounted secret), then fallback to local
+        creds_path = "/app/credentials.json" if os.path.exists("/app/credentials.json") else "credentials.json"
+        
+        if not os.path.exists(creds_path):
+            print(f"⚠️ Credentials not found at {creds_path}")
+            return False
+        
+        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        sheets_initialized = True
+        print(f"✅ Google Sheets connected ({creds_path})")
+        return True
+        
+    except Exception as e:
+        print(f"⚠️ Google Sheets auth failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 # LINE Auth
 def get_channel_access_token(cid, secret):
@@ -217,6 +237,9 @@ async def callback(request: Request):
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     global processed_messages
+    
+    # Ensure Google Sheets is initialized
+    init_google_sheets()
     
     msg_id = event.message.id
     if msg_id in processed_messages:
@@ -564,6 +587,9 @@ def handle_text(event):
 def handle_image(event):
     global processed_messages
     
+    # Ensure Google Sheets is initialized
+    init_google_sheets()
+    
     msg_id = event.message.id
     if msg_id in processed_messages:
         return
@@ -721,10 +747,36 @@ def handle_image(event):
 # =============================================================================
 # 6. Server Entry Point
 # =============================================================================
+
 @app.get("/")
 def root():
-    return {"status": "Yang Family Finance Agent Active", "sheets": "12 tabs configured"}
+    """Health check endpoint"""
+    return {"status": "Yang Family Finance Agent Active", "version": "3.0-preseed"}
+
+@app.get("/health")
+def health():
+    """Detailed health check - Cloud Run startup verification"""
+    try:
+        sheets_ok = init_google_sheets()
+    except:
+        sheets_ok = False
+    
+    ai_ok = di_client is not None
+    line_ok = line_bot_api is not None
+    
+    status = "healthy" if all([sheets_ok, ai_ok, line_ok]) else "degraded"
+    
+    return {
+        "status": status,
+        "version": "3.0-preseed",
+        "sheets": "connected" if sheets_ok else "disconnected",
+        "ai": "connected" if ai_ok else "disconnected",
+        "line": "connected" if line_ok else "disconnected"
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    import os
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🚀 Starting Yang Family Finance Bot on port {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
