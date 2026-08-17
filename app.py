@@ -60,12 +60,45 @@ def init_google_sheets():
         return True
     
     try:
-        # Try Cloud Run path first (mounted secret), then fallback to local
-        creds_path = "/app/credentials.json" if os.path.exists("/app/credentials.json") else "credentials.json"
+        # Cloud Run mounts secrets as directories - need to find the actual file
+        # Mount path: /app/credentials.json/google-sheets-credentials
+        # Try multiple possible paths
+        possible_paths = [
+            "/app/credentials.json/google-sheets-credentials",  # Cloud Run volume (directory)
+            "/app/credentials.json",  # Cloud Run volume (file - old style)
+            "/secrets/credentials.json",  # GOOGLE_APPLICATION_CREDENTIALS env var
+            "credentials.json",  # Local development
+        ]
         
-        if not os.path.exists(creds_path):
-            print(f"⚠️ Credentials not found at {creds_path}")
+        creds_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                creds_path = path
+                break
+        
+        if not creds_path:
+            print(f"⚠️ No credentials found in any of: {possible_paths}")
+            # Debug: List /app directory to see what's there
+            try:
+                print(f"  ℹ️  /app contents: {os.listdir('/app')}")
+                if os.path.exists('/app/credentials.json'):
+                    print(f"  ℹ️  /app/credentials.json exists, is_dir={os.path.isdir('/app/credentials.json')}")
+                    if os.path.isdir('/app/credentials.json'):
+                        print(f"  ℹ️  Contents: {os.listdir('/app/credentials.json')}")
+            except Exception as list_err:
+                print(f"  ⚠️  Can't list /app: {list_err}")
             return False
+        
+        # If it's a directory, look for the secret file inside
+        if os.path.isdir(creds_path):
+            # List contents to find the actual secret file
+            files = os.listdir(creds_path)
+            if files:
+                creds_path = os.path.join(creds_path, files[0])
+                print(f"  ℹ️  Found secret file: {creds_path}")
+            else:
+                print(f"⚠️ Secret directory {creds_path} is empty")
+                return False
         
         creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
         gc = gspread.authorize(creds)
