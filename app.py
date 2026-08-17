@@ -100,7 +100,7 @@ def get_main_menu(user_name):
         return QuickReply(items=[
             QuickReplyButton(action=MessageAction(label="💸 รายจ่าย", text="เมนูรายจ่าย")),
             QuickReplyButton(action=MessageAction(label="💰 เงินเดือน", text="อัปโหลดสลิป")),
-            QuickReplyButton(action=MessageAction(label="🏦 เปดบญช", text="เปดบญชใหม")),
+            QuickReplyButton(action=MessageAction(label="⚙️ ตั้งค่าบญช", text="ตังค่าบญช")),
             QuickReplyButton(action=MessageAction(label="💸 โอนเงิน", text="โอนระหวางบญช")),
             QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลอ", text="ตรวจสอบยอด")),
             QuickReplyButton(action=MessageAction(label="📋 งบประมาณ", text="ตังงบประมาณ")),
@@ -110,7 +110,7 @@ def get_main_menu(user_name):
         return QuickReply(items=[
             QuickReplyButton(action=MessageAction(label="💸 Expenses", text="Expense menu")),
             QuickReplyButton(action=MessageAction(label="💰 Salary", text="Upload salary slip")),
-            QuickReplyButton(action=MessageAction(label="🏦 Open Account", text="Open new account")),
+            QuickReplyButton(action=MessageAction(label="⚙️ Account Settings", text="Account settings")),
             QuickReplyButton(action=MessageAction(label="💸 Transfer", text="Transfer between accounts")),
             QuickReplyButton(action=MessageAction(label="📊 Balance", text="Check balance")),
             QuickReplyButton(action=MessageAction(label="📋 Budget", text="Set budget")),
@@ -402,12 +402,49 @@ def handle_text(event):
         send_bank_response(user_id, user_name, reply, "budget")
         return
     
-    # === OPEN NEW ACCOUNT (Requires Approval) ===
-    if text == "Open new account" or text == "เปดบญชใหม":
+    # === ACCOUNT SETTINGS (Replaced Open Account) ===
+    if text == "Account settings" or text == "ตังค่าบญช":
+        if gc:
+            try:
+                acc = sh.worksheet("Accounts")
+                accounts = acc.get_all_values()[1:6]  # Show first 5 pre-seeded pockets
+                
+                if user_name == "prapa.yang":
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]}) - {row[8]}" for i, row in enumerate(accounts) if row])
+                    reply = (
+                        f"⚙️ **ตังค่าบญช**\n\n"
+                        f"📋 **5 บญชทตังคาไว**:\n\n{acc_list}\n\n"
+                        f"⚠️ บญชทงหมดตองการอนุมัตจากทงสองฝาย\n\n"
+                        f"ตองการ:\n"
+                        f"1. พมพ 'ขอเปดบญชใหม' เพ่อรองขอ\n"
+                        f"2. พมพ 'โอนเงิน' เพ่อโอนระหวางบญช"
+                    )
+                else:
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]}) - {row[8]}" for i, row in enumerate(accounts) if row])
+                    reply = (
+                        f"⚙️ **Account Settings**\n\n"
+                        f"📋 **5 Pre-Configured Accounts**:\n\n{acc_list}\n\n"
+                        f"⚠️ All accounts require dual approval\n\n"
+                        f"To:\n"
+                        f"1. Type 'Request new account' to propose new account\n"
+                        f"2. Type 'Transfer' to transfer between accounts"
+                    )
+                
+                send_bank_response(user_id, user_name, reply, "general", get_main_menu(user_name))
+            except Exception as e:
+                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
+                send_bank_response(user_id, user_name, reply, "general")
+        else:
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    # === REQUEST NEW ACCOUNT (Requires Approval) ===
+    if text == "Request new account" or text.startswith("ขอเปดบญชใหม"):
         if user_name == "prapa.yang":
             reply = (
-                "🏦 **เปดบญชใหม**\n\n"
-                "อารยาชวยถามขอมูลเพ่มเตมครับ:\n"
+                "🏦 **รองขอเปดบญชใหม**\n\n"
+                "อารยาชวยบอกขอมูลครับ:\n"
                 "1. ชื่อบญชทตองการ?\n"
                 "2. ประเภทบญช? (กระเป๋า/ธนาคาร)\n"
                 "3. เงินเรมตนเทาไร?\n"
@@ -416,8 +453,8 @@ def handle_text(event):
             )
         else:
             reply = (
-                "🏦 **Open New Account**\n\n"
-                "I'll help you open a new account. Please tell me:\n"
+                "🏦 **Request New Account**\n\n"
+                "Please provide:\n"
                 "1. Account name?\n"
                 "2. Account type? (Pocket/Bank)\n"
                 "3. Initial deposit?\n"
