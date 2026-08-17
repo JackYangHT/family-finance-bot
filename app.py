@@ -340,16 +340,23 @@ def handle_text(event):
         
     except Exception as e:
         reply = f"📝 {text}"
+        if who_spent == "prapa.yang":
+            reply = f"📝 ขอโทษค่ะ ไมเขาใจขอมูล: {text}"
         log_chat(user_id, who_spent, "text", text, "", f"Parse error: {e}", "partial")
-
-    # Send main reply + polite follow-up (bank call center style)
-    line_bot_api.push_message(
-        user_id,
-        [
-            TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
-            TextSendMessage(text=get_polite_followup(who_spent, "expense"))
-        ]
-    )
+    
+    # ALWAYS send with Quick Replies (even for unrecognized input)
+    try:
+        line_bot_api.push_message(
+            user_id,
+            [
+                TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
+                TextSendMessage(text=get_polite_followup(who_spent, "general"))
+            ]
+        )
+    except Exception as send_error:
+        print(f"⚠️ Failed to send message: {send_error}")
+        # Fallback: send without quick replies
+        line_bot_api.push_message(user_id, TextSendMessage(text=reply))
 
 # =============================================================================
 # 5. Vision Handler for Salary Slips (Taiwan Tax Compliance)
