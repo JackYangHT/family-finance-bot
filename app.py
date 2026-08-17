@@ -384,19 +384,26 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
         try:
             data['purpose'] = text
             
-            from approval_workflow import create_approval_request
-            request_id = create_approval_request(
-                spreadsheet=sh,
-                requester=user_name,
-                request_type='transfer',
-                details=data
+            from approval_workflow import create_request
+            request_id, approver = create_request(
+                sh,
+                user_id,
+                user_name,
+                'transfer',
+                data['purpose'],
+                amount=data['amount'],
+                from_acc=data['from_account'],
+                to_acc=data['to_account']
             )
             
             del user_flow_state[user_id]
             
-            reply = f"✅ Transfer request created!\n\nFrom: {data['from_account']}\nTo: {data['to_account']}\nAmount: {data['amount']:,.2f} NTD\nPurpose: {data['purpose']}\n\nRequest ID: {request_id}\n\nWaiting for approval..." if user_name != "prapa.yang" else f"✅ สรางคำขอโอนแลว!\n\nจาก: {data['from_account']}\nไป: {data['to_account']}\nจำนวน: {data['amount']:,.2f} บาท\nเหตผล: {data['purpose']}\n\nรหัสคำขอ: {request_id}\n\nรอการอนุมัติ..."
+            reply = f"✅ Transfer request created!\n\nFrom: {data['from_account']}\nTo: {data['to_account']}\nAmount: {data['amount']:,.2f} NTD\nPurpose: {data['purpose']}\n\nRequest ID: {request_id}\nSent to: {approver}\n\nWaiting for approval..." if user_name != "prapa.yang" else f"✅ สรางคำขอโอนแลว!\n\nจาก: {data['from_account']}\nไป: {data['to_account']}\nจำนวน: {data['amount']:,.2f} บาท\nเหตผล: {data['purpose']}\n\nรหัสคำขอ: {request_id}\nสงไป: {approver}\n\nรอการอนุมัต..."
             
             send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+            
+            # TODO: Send notification to approver (Prapa/Jack)
+            
             return
             
         except Exception as e:
