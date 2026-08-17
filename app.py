@@ -17,7 +17,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, ImageMessage, TextSendMessage, 
-    QuickReply, QuickReplyButton, MessageAction
+    QuickReply, QuickReplyButton, MessageAction, FlexMessage
 )
 from openai import OpenAI
 import gspread
@@ -26,6 +26,7 @@ from approval_workflow import (
     create_request, get_pending_approvals, approve_request, reject_request,
     format_approval_message
 )
+from flex_message_templates import create_approval_card, create_receipt_confirmation_card
 
 app = FastAPI()
 
@@ -238,6 +239,56 @@ def send_bank_response(user_id, user_name, main_text, followup_context="general"
         line_bot_api.push_message(user_id, TextSendMessage(text=main_text))
         return False
 
+
+def send_approval_card(user_id, request_id, request_type, details, amount, from_account, to_account, requester):
+    """Send Approval Request Flex Message Card"""
+    try:
+        # Create the Flex Message bubble
+        flex_bubble = create_approval_card(
+            request_id=request_id,
+            request_type=request_type,
+            details=details,
+            amount=amount,
+            from_account=from_account,
+            to_account=to_account,
+            requester=requester
+        )
+        
+        # Send as Flex Message
+        line_bot_api.push_message(
+            user_id,
+            FlexMessage(
+                alt_text=f"Approval Request: {request_type} - {amount}",
+                contents=flex_bubble
+            )
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to send approval card: {e}")
+        # Fallback to text
+        fallback_text = format_approval_message(request_id, request_type, details, amount, from_account, to_account, requester)
+        line_bot_api.push_message(user_id, TextSendMessage(text=fallback_text))
+        return False
+
+
+def send_receipt_card(user_id, vendor, amount, category, user_name):
+    """Send Receipt Confirmation Flex Message Card"""
+    try:
+        flex_bubble = create_receipt_confirmation_card(vendor, amount, category, user_name)
+        
+        line_bot_api.push_message(
+            user_id,
+            FlexMessage(
+                alt_text=f"Confirm expense: {vendor} {amount}",
+                contents=flex_bubble
+            )
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to send receipt card: {e}")
+        # Fallback to text
+        return False
+
 # =============================================================================
 # 3. Webhook Handler
 # =============================================================================
@@ -378,27 +429,33 @@ def handle_text(event):
             
             if not pending:
                 if user_name == "prapa.yang":
-                    reply = "✅ ไมมคำขออนุมัตคงคางครับ - รายการทงหมดไดรบอนุมัตแลวครับ"
+                    reply = "✅ ไมมีคำขออนุมัติคงคางครับ - รายการทั้งหมดไดรับอนุมัติแลวครับ"
                 else:
                     reply = "✅ No pending approvals - all requests have been processed."
+                send_bank_response(user_id, user_name, reply, "general", get_main_menu(user_name))
             else:
-                if user_name == "prapa.yang":
-                    reply = f"⚖️ **ม {len(pending)} คำขออนุมัตคงคาง**\n\n"
-                else:
-                    reply = f"⚖️ **{len(pending)} Pending Approval(s)**\n\n"
+                # Send each approval as a Flex Card
+                for req in pending[:5]:  # Show first 5
+                    send_approval_card(
+                        user_id=user_id,
+                        request_id=req["request_id"],
+                        request_type=req["type"],
+                        details=req["details"],
+                        amount=float(req["amount"]) if req["amount"] else 0,
+                        from_account=req["from_acc"],
+                        to_account=req["to_acc"],
+                        requester=req["requester"]
+                    )
                 
-                for req in pending[:3]:  # Show first 3
-                    reply += format_approval_message(req, user_name) + "\n\n"
-                    # Add approve/reject buttons inline
-                    if user_name == "prapa.yang":
-                        reply += "พมพ 'อนุมัต {request_id}' หรอ 'ปฏเสธ {request_id}'\n"
-                    else:
-                        reply += f"Type 'Approve {req['request_id']}' or 'Reject {req['request_id']}'\n"
-                    reply += "─" * 40 + "\n"
-            
-            send_bank_response(user_id, user_name, reply, "general", get_main_menu(user_name))
+                # Send follow-up with instructions
+                if user_name == "prapa.yang":
+                    followup = f"📋 มี {len(pending)} คำขออนุมัติรอการตรวจสอบ\n\nแตะปุ่ม ✅ Approve หรือ ❌ Reject ในบัตรด้านล่างเพื่อดำเนินการครับ"
+                else:
+                    followup = f"📋 {len(pending)} approval(s) pending\n\nTap ✅ Approve or ❌ Reject on the cards above to process."
+                
+                send_bank_response(user_id, user_name, followup, "general", get_main_menu(user_name))
         else:
-            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานข้อมูลไม่สามารถเชื่อมต่อได้"
             send_bank_response(user_id, user_name, reply, "general")
         return
     
