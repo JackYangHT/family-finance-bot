@@ -305,8 +305,9 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 2, 'data': data}
             
-            reply = f"✅ From: {data['from_account']}\n\nSelect destination account (1-5 or name):" if user_name != "prapa.yang" else f"✅ จาก: {data['from_account']}\n\nเลือกบัญชปลายทาง (1-5 หรือพิมพชื่อ):"
-            send_bank_response(user_id, user_name, reply, "transfer")
+            reply = f"✅ From: {data['from_account']}\n\nSelect destination account (1-5 or name):" if user_name != "prapa.yang" else f"✅ จาก: {data['from_account']}\n\nเลอกบญชปลายทาง (1-5 หรอพมพชอ):"
+            # No Quick Reply during flow - user should continue typing
+            send_bank_response(user_id, user_name, reply, "transfer", None)
             return
             
         except Exception as e:
@@ -347,7 +348,8 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 3, 'data': data}
             
             reply = f"✅ To: {data['to_account']}\n\nEnter amount to transfer:" if user_name != "prapa.yang" else f"✅ ไป: {data['to_account']}\n\nใสจำนวนเงินทตองการโอน:"
-            send_bank_response(user_id, user_name, reply, "transfer")
+            # No Quick Reply during flow
+            send_bank_response(user_id, user_name, reply, "transfer", None)
             return
             
         except Exception as e:
@@ -368,7 +370,8 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 4, 'data': data}
             
             reply = f"💰 Amount: {amount:,.2f} NTD\n\nEnter purpose/note for transfer:" if user_name != "prapa.yang" else f"💰 จำนวน: {amount:,.2f} บาท\n\nใสเหตผล/หมายเหตุในการโอน:"
-            send_bank_response(user_id, user_name, reply, "transfer")
+            # No Quick Reply during flow
+            send_bank_response(user_id, user_name, reply, "transfer", None)
             return
             
         except ValueError:
