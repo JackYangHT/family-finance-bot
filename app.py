@@ -201,6 +201,47 @@ def get_expense_menu(user_name):
             QuickReplyButton(action=MessageAction(label="🚗 Transport", text="Category: Transport")),
         ])
 
+def get_transfer_source_menu(user_name):
+    """Transfer source account Quick Reply buttons"""
+    if gc:
+        try:
+            acc = sh.worksheet("Accounts")
+            accounts = acc.get_all_values()[1:]
+            
+            buttons = []
+            for i, row in enumerate(accounts):
+                if row and row[1]:  # Has account name
+                    account_name = row[1]
+                    currency = row[3] if len(row) > 3 else ""
+                    label = f"{i+1}. {account_name} ({currency})"
+                    # Truncate if too long (LINE max 20 chars for label)
+                    if len(label) > 20:
+                        label = f"{account_name[:17]}..."
+                    buttons.append(QuickReplyButton(action=MessageAction(label=label[:20], text=str(i+1))))
+            
+            if buttons:
+                return QuickReply(items=buttons)
+        except:
+            pass
+    
+    # Fallback
+    if user_name == "prapa.yang":
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="1. Family Petty Cash", text="1")),
+            QuickReplyButton(action=MessageAction(label="2. Urgent Fund", text="2")),
+            QuickReplyButton(action=MessageAction(label="3. Son's USD", text="3")),
+            QuickReplyButton(action=MessageAction(label="4. Wife's USD", text="4")),
+            QuickReplyButton(action=MessageAction(label="5. Jack's Personal", text="5")),
+        ])
+    else:
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="1. Family Petty Cash", text="1")),
+            QuickReplyButton(action=MessageAction(label="2. Urgent Fund", text="2")),
+            QuickReplyButton(action=MessageAction(label="3. Son's USD", text="3")),
+            QuickReplyButton(action=MessageAction(label="4. Wife's USD", text="4")),
+            QuickReplyButton(action=MessageAction(label="5. Jack's Personal", text="5")),
+        ])
+
 def get_polite_followup(user_name, context="general"):
     """Polite follow-up question - Bank call center style"""
     if user_name == "prapa.yang":
@@ -733,30 +774,7 @@ def handle_text(event):
         send_bank_response(user_id, user_name, reply, "general")
         return
     
-    # === TRANSFER (Requires Approval) ===
-    if text == "Transfer between accounts" or text == "โอนระหวางบญช":
-        if gc:
-            try:
-                acc = sh.worksheet("Accounts")
-                accounts = acc.get_all_values()[1:]  # Skip header
-                
-                if user_name == "prapa.yang":
-                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
-                    reply = f"📋 **บญชทมี**:\n\n{acc_list}\n\nเลอกบญชทตองการโอนครับ\n⚠️ คุณแจ๊คตองอนุมัตกอนโอนครับ"
-                else:
-                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
-                    reply = f"📋 **Available Accounts**:\n\n{acc_list}\n\nSelect account to transfer from.\n⚠️ This requires Prapa's approval."
-                
-                send_bank_response(user_id, user_name, reply, "transfer")
-            except Exception as e:
-                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
-                send_bank_response(user_id, user_name, reply, "transfer")
-        else:
-            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
-            send_bank_response(user_id, user_name, reply, "transfer")
-        return
-    
-    # === TRANSFER BETWEEN ACCOUNTS ===
+    # === TRANSFER BETWEEN ACCOUNTS (4-STEP FLOW) ===
     if text == "Transfer between accounts" or text == "โอนระหวางบญช":
         if gc:
             try:
@@ -773,7 +791,8 @@ def handle_text(event):
                 # Set flow state for step 1
                 user_flow_state[user_id] = {'flow': 'transfer', 'step': 1, 'data': {}}
                 
-                send_bank_response(user_id, user_name, reply, "transfer")
+                # Send with account selection buttons
+                send_bank_response(user_id, user_name, reply, "transfer", get_transfer_source_menu(user_name))
             except Exception as e:
                 reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
                 send_bank_response(user_id, user_name, reply, "transfer")
@@ -781,7 +800,6 @@ def handle_text(event):
             reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
             send_bank_response(user_id, user_name, reply, "transfer")
         return
-    
     # === EXPENSE LOGGING (AI Categorization) ===
     # Use DeepSeek-V3 for text categorization (cheaper)
     if di_client and gc:
