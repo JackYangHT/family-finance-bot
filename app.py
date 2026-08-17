@@ -1,7 +1,10 @@
 """
 Yang Family Financial & Tax Agent - LINE Bot
-Supports: jack.yang (English), prapa.yang (Thai)
-Database: 7-sheet Google Sheets structure for proper accounting
+Professional Bank Call Center Style
+- Jack (jack.yang): English/Chinese
+- Prapa (prapa.yang, อารยา หยาง): Thai ONLY with formal address
+- Models: DeepSeek-V3 (text, cheaper), Qwen3-VL (vision)
+- Features: Expenditure, Income, Open Account, Transfer, Balance
 """
 import os
 import io
@@ -9,7 +12,7 @@ import json
 import base64
 import requests
 from datetime import datetime
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
@@ -25,27 +28,33 @@ app = FastAPI()
 # =============================================================================
 # 1. Environment & Auth Setup
 # =============================================================================
-LINE_CHANNEL_ID = os.environ.get("LINE_CHANNEL_ID", "")
+LINE_CHANNEL_ID = os.environ.get("LINE_CHANNEL_ID", "2010958353")
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 DEEPINFRA_API_KEY = os.environ.get("DEEPINFRA_API_KEY", "")
 SPREADSHEET_ID = "1T4uP-1WInBLJ5ulSMGGtVBJuDR0GyGR-tngwxLw8KJY"
 
-# Deduplication cache - track processed message IDs (last 5 minutes)
+# User tracking - REAL LINE USER IDs (update these!)
+FAMILY_MEMBERS = {
+    # "YOUR_ACTUAL_LINE_USER_ID_HERE": "jack.yang",
+    # "PRAPA_ACTUAL_LINE_USER_ID_HERE": "prapa.yang",
+}
+
+# Deduplication cache
 processed_messages = {}
 
 # Google Sheets Auth
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+gc = None
+sh = None
+
 try:
-    # Try Cloud Run path first (/app/credentials.json), then fallback to local
     creds_path = "/app/credentials.json" if os.path.exists("/app/credentials.json") else "credentials.json"
     creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    print(f"✅ Google Sheets connected (credentials: {creds_path})")
+    print(f"✅ Google Sheets connected ({creds_path})")
 except Exception as e:
     print(f"⚠️ Google Sheets auth failed: {e}")
-    gc = None
-    sh = None
 
 # LINE Auth
 def get_channel_access_token(cid, secret):
@@ -58,120 +67,150 @@ ACCESS_TOKEN = get_channel_access_token(LINE_CHANNEL_ID, LINE_CHANNEL_SECRET)
 line_bot_api = LineBotApi(ACCESS_TOKEN) if ACCESS_TOKEN else None
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# DeepInfra AI Client
-di_client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url="https://api.deepinfra.com/v1/openai")
+# AI Clients
+# DeepSeek-V3 for text (cheaper, fast)
+# Qwen3-VL for vision (receipts, salary slips)
+di_client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url="https://api.deepinfra.com/v1/openai") if DEEPINFRA_API_KEY else None
 
 # =============================================================================
-# 2. Helper Functions
+# 2. Helper Functions - Professional Bank Call Center Style
 # =============================================================================
 
-# Bilingual Quick Reply Buttons
-def get_quick_replies(user_name="jack.yang"):
+def get_user_name(user_id, default="jack.yang"):
+    """Determine user name from LINE ID or prefix"""
+    # Check FAMILY_MEMBERS dict
+    if user_id in FAMILY_MEMBERS:
+        return FAMILY_MEMBERS[user_id]
+    return default
+
+def get_greeting(user_name):
+    """Professional bank call center greeting"""
+    if user_name == "prapa.yang":
+        return "สวัสดีครับคณนายอารยา หยาง มีอะไรให้รับใช้วันนี้ครับ?"
+    else:
+        return "Hello Mr Jack, what help can I do for you today?"
+
+def get_main_menu(user_name):
+    """Main menu Quick Reply buttons - Bank style"""
     if user_name == "prapa.yang":
         return QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="💰 สลปเงนเดอน", text="Upload Salary Slip")),
-            QuickReplyButton(action=MessageAction(label="🏠 ค่าใชจายครอบครัว", text="Category: Petty Cash")),
+            QuickReplyButton(action=MessageAction(label="💸 รายจ่าย", text="เมนูรายจ่าย")),
+            QuickReplyButton(action=MessageAction(label="💰 เงินเดือน", text="อัปโหลดสลิป")),
+            QuickReplyButton(action=MessageAction(label="🏦 เปดบญช", text="เปดบญชใหม")),
+            QuickReplyButton(action=MessageAction(label="💸 โอนเงิน", text="โอนระหวางบญช")),
+            QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลอ", text="ตรวจสอบยอด")),
+        ])
+    else:
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="💸 Expenses", text="Expense menu")),
+            QuickReplyButton(action=MessageAction(label="💰 Salary", text="Upload salary slip")),
+            QuickReplyButton(action=MessageAction(label="🏦 Open Account", text="Open new account")),
+            QuickReplyButton(action=MessageAction(label="💸 Transfer", text="Transfer between accounts")),
+            QuickReplyButton(action=MessageAction(label="📊 Balance", text="Check balance")),
+        ])
+
+def get_expense_menu(user_name):
+    """Expense category Quick Reply buttons"""
+    if user_name == "prapa.yang":
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="🏠 ค่าใชจายครอบครัว", text="Category: Family Petty Cash")),
             QuickReplyButton(action=MessageAction(label="🧍 ส่วนตัว", text="Category: Personal")),
             QuickReplyButton(action=MessageAction(label="🚨 เรงด่วน", text="Category: Urgent")),
-            QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลอ", text="Check Balance"))
+            QuickReplyButton(action=MessageAction(label="🍽️ อาหาร", text="Category: Food")),
+            QuickReplyButton(action=MessageAction(label="🚗 คมนาคม", text="Category: Transport")),
         ])
     else:
         return QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="💰 Salary Slip", text="Upload Salary Slip")),
-            QuickReplyButton(action=MessageAction(label="🏠 Petty Cash", text="Category: Petty Cash")),
+            QuickReplyButton(action=MessageAction(label="🏠 Family Petty Cash", text="Category: Family Petty Cash")),
             QuickReplyButton(action=MessageAction(label="🧍 Personal", text="Category: Personal")),
             QuickReplyButton(action=MessageAction(label="🚨 Urgent", text="Category: Urgent")),
-            QuickReplyButton(action=MessageAction(label="📊 Balance", text="Check Balance"))
+            QuickReplyButton(action=MessageAction(label="🍽️ Food", text="Category: Food")),
+            QuickReplyButton(action=MessageAction(label="🚗 Transport", text="Category: Transport")),
         ])
 
-# Polite follow-up message (Thai/English bank call center style)
-def get_polite_followup(user_name="jack.yang", context="general"):
+def get_polite_followup(user_name, context="general"):
+    """Polite follow-up question - Bank call center style"""
     if user_name == "prapa.yang":
         followups = {
-            "expense": "🙏 ขอบคณค่ะ ทานมีรายจ่ายอ่นๆ ต้องการบันทกเพ่มเตมไหมค๊ะ? พมพขอมูลเชน 'ร้านค้า จำนวน' ไดเลยค๊ะ",
-            "balance": "🙏 ขอบคณค่ะ ทานตองการทราบขอมูลเพ่มเตมดานไหนอีกไหมค๊ะ? ยินดใหบรการตลอด 24 ชั่โมงค๊ะ",
-            "salary": "🙏 ขอบคณค่ะ ทานมสลิปเงนเดอนของเดอนหนาทจะอัปโหลดไหมค๊ะ? หรอมีขอสงสยตองการถามเพ่มเตมไหมค๊ะ",
-            "general": "🙏 ขอบคณค่ะ ทานมีขอสงสยอ่นๆ หรอตองการบันทกรายจ่ายเพ่มเตมไหมค๊ะ? ยินดใหบรการค๊ะ"
+            "greeting": "มีอะไรให้อารยาชวยวันนี้บอกไดเลยครับ",
+            "expense": "มีรายจ่ายอ่นๆ ตองการบันทกเพ่มเตมไหมครับ? พมพขอมูลเชน 'รานครำานวน' ไดเลยครับ",
+            "balance": "ตองการทราบขอมูลเพ่มเตมดานไหนอีกไหมครับ? ยินดใหบรการตลอด 24 ชั่โมงครับ",
+            "salary": "มสลิปเงนเดอนของเดอนหนาทจะอัปโหลดไหมครับ? หรอมีขอสงสยตองการถามเพ่มเตมไหมครับ",
+            "transfer": "ตองการโอนเงินเพ่มเตมไหมครับ? หรอมีธุระกรรมอ่นๆ ทให้อารยาชวยไหมครับ",
+            "general": "มีขอสงสยอ่นๆ หรอตองการบันทกรายจ่ายเพ่มเตมไหมครับ? ยินดใหบรการครับ"
         }
         return followups.get(context, followups["general"])
     else:
         followups = {
-            "expense": "🙏 Thank you! Would you like to log more expenses or check your balance?",
-            "balance": "🙏 Thank you! Would you like more details on any category or log new expenses?",
-            "salary": "🙏 Thank you! Do you have more salary slips to upload or any questions?",
-            "general": "🙏 Thank you! Any other questions or expenses to log today?"
+            "greeting": "How can I assist you today?",
+            "expense": "Any other expenses to log? Just type 'vendor amount'!",
+            "balance": "Would you like more details on any category?",
+            "salary": "Do you have more salary slips to upload?",
+            "transfer": "Any other transfers or transactions today?",
+            "general": "Any other questions or expenses to log today?"
         }
         return followups.get(context, followups["general"])
 
-# Log chat message to Chat_Logs sheet
-def log_chat(user_id, user_name, msg_type, raw_msg, ai_response, action, status):
-    if gc:
-        try:
-            chat_sheet = sh.worksheet("Chat_Logs")
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            chat_sheet.append_row([timestamp, user_id, user_name, msg_type, raw_msg, ai_response, action, status])
-        except Exception as e:
-            print(f"⚠️ Chat log failed: {e}")
-
-# =============================================================================
-# 3. Health Check & Database Setup
-# =============================================================================
-@app.get("/")
-def home():
+def send_bank_response(user_id, user_name, main_text, followup_context="general", quick_reply=None):
+    """Send professional two-message bank response"""
     try:
-        import subprocess
-        subprocess.run(["python", "setup_database.py"], check=True, capture_output=True)
-    except:
-        pass
-    return {"status": "Yang Family Finance Agent Active", "sheets": "7 tabs configured"}
+        # Message 1: Main response + Quick Reply
+        msg1 = TextSendMessage(
+            text=main_text,
+            quick_reply=quick_reply or get_main_menu(user_name)
+        )
+        
+        # Message 2: Polite follow-up (no buttons)
+        msg2 = TextSendMessage(text=get_polite_followup(user_name, followup_context))
+        
+        line_bot_api.push_message(user_id, [msg1, msg2])
+        return True
+    except Exception as e:
+        print(f"⚠️ Send failed: {e}")
+        # Fallback: send text only
+        line_bot_api.push_message(user_id, TextSendMessage(text=main_text))
+        return False
 
+# =============================================================================
+# 3. Webhook Handler
+# =============================================================================
 @app.post("/webhook")
 async def callback(request: Request):
-    from fastapi.responses import PlainTextResponse
-    
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
     
-    print(f"🔔 WEBHOOK CALLED - Signature: {'YES' if signature else 'NO'}, Body length: {len(body)} bytes")
+    print(f"🔔 Webhook: Signature={'YES' if signature else 'NO'}, Body={len(body)} bytes")
     
-    # Always return 200 for LINE - even if there are errors
     try:
-        # LINE verification requests may not have signature
         if not signature:
-            print("ℹ️ Webhook called without signature (LINE verification)")
-            return PlainTextResponse(content="OK", status_code=200)
+            print("ℹ️ LINE verification (no signature)")
+            return {"status": "OK"}
         
-        # Process the webhook
-        print(f"📥 Processing webhook body: {body.decode('utf-8')[:200]}...")
         handler.handle(body.decode("utf-8"), signature)
-        print("✅ Handler processed successfully")
+        print("✅ Handler processed")
     except InvalidSignatureError:
-        # Still return 200 - LINE will retry
-        print(f"⚠️ Invalid LINE signature (will retry)")
+        print(f"⚠️ Invalid signature")
     except Exception as e:
-        # Catch ALL errors and return 200 anyway
-        print(f"⚠️ Webhook handler error (returning 200 anyway): {e}")
+        print(f"⚠️ Handler error: {e}")
         import traceback
-        print(traceback.format_exc())
+        traceback.print_exc()
     
-    # Always return 200 OK to LINE
-    return PlainTextResponse(content="OK", status_code=200)
+    return {"status": "OK"}
 
 # =============================================================================
-# 4. Text Message Handler (Expenses & Commands)
+# 4. Text Message Handler
 # =============================================================================
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
-    global processed_messages  # MUST declare global to modify it!
+    global processed_messages
     
-    # DEDUPLICATION: Skip if already processed this message ID
     msg_id = event.message.id
     if msg_id in processed_messages:
-        print(f"⚠️ Skipping duplicate text message: {msg_id}")
-        return "OK"
+        print(f"⚠️ Duplicate: {msg_id}")
+        return
     processed_messages[msg_id] = datetime.now()
     
-    # Clean old entries (older than 5 minutes)
+    # Clean old entries
     from datetime import timedelta
     cutoff = datetime.now() - timedelta(minutes=5)
     processed_messages = {k: v for k, v in processed_messages.items() if v > cutoff}
@@ -179,408 +218,350 @@ def handle_text(event):
     text = event.message.text.strip()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Handle both 1-on-1 chats and group chats
+    # Get user ID
     if hasattr(event.source, 'user_id') and event.source.user_id:
-        # 1-on-1 chat or user in group
         user_id = event.source.user_id
     else:
-        # Group chat without user context - use group ID as fallback
         user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
-    # Determine user name from prefix or auto-detect
-    who_spent = "jack.yang"  # Default
+    # Determine user name
+    user_name = get_user_name(user_id, "jack.yang")
+    
+    # Check for prefix override
     if text.startswith("jack.yang"):
-        who_spent = "jack.yang"
+        user_name = "jack.yang"
         text = text.replace("jack.yang", "", 1).strip()
     elif text.startswith("prapa.yang"):
-        who_spent = "prapa.yang"
+        user_name = "prapa.yang"
         text = text.replace("prapa.yang", "", 1).strip()
-    else:
-        # No prefix - use LINE User ID mapping (update with real IDs)
-        # To find your LINE User ID: send "jack.yang test" and check Cloud Run logs
-        FAMILY_MEMBERS = {
-            "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "jack.yang",  # Replace with YOUR real LINE User ID
-            "Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy": "prapa.yang"  # Replace with Prapa's real LINE User ID
-        }
-        who_spent = FAMILY_MEMBERS.get(user_id, "jack.yang")  # Default to jack.yang for unknown users
-
-    # Command: Upload Salary Slip
-    if text == "Upload Salary Slip":
-        reply = "📄 Please upload a photo or screenshot of the salary slip now."
-        if who_spent == "prapa.yang":
-            reply = "📄 กรุณาอัปโหลดรูปสลิปเงินเดือนตอนนี้"
-        line_bot_api.push_message(user_id, TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)))
-        log_chat(user_id, who_spent, "text", text, "", "Awaiting salary slip", "success")
+    
+    print(f"📝 User: {user_name} ({user_id[:10]}...), Text: {text[:50]}")
+    
+    # === GREETING / MAIN MENU ===
+    if text.lower() in ["hello", "hi", "สวัสดี", "menu", "เมน"]:
+        greeting = get_greeting(user_name)
+        send_bank_response(user_id, user_name, greeting, "greeting", get_main_menu(user_name))
         return
-
-    # Command: Check Balance
-    if text == "Check Balance":
+    
+    # === EXPENSE MENU ===
+    if text == "Expense menu" or text == "เมนูรายจ่าย":
+        reply = "📋 Please select expense category:" if user_name != "prapa.yang" else "📋 กรุณาเลอกหมวดหมู่รายจ่าย:"
+        send_bank_response(user_id, user_name, reply, "expense", get_expense_menu(user_name))
+        return
+    
+    # === UPLOAD SALARY SLIP ===
+    if text == "Upload salary slip" or text == "อัปโหลดสลิป":
+        reply = "📄 Please upload a photo or screenshot of the salary slip now." if user_name != "prapa.yang" else "📄 กรุณาอัปโหลดรูปสลิปเงินเดอนตอนนี้"
+        send_bank_response(user_id, user_name, reply, "salary", get_main_menu(user_name))
+        return
+    
+    # === CHECK BALANCE ===
+    if text == "Check balance" or text == "ตรวจสอบยอด":
         if gc:
             try:
                 dash = sh.worksheet("Dashboard_Summary")
-                # Get ACTUAL VALUES not formulas!
                 vals = dash.get_values(value_render_option='FORMATTED_VALUE')
                 
-                # Extract key metrics (handle empty/missing cells)
-                def get_val(row_idx, col_idx=1):
-                    if row_idx < len(vals) and col_idx < len(vals[row_idx]):
-                        val = vals[row_idx][col_idx]
-                        return val if val else "0"
+                def get_val(row_idx):
+                    if row_idx < len(vals) and len(vals[row_idx]) > 1:
+                        return vals[row_idx][1] if vals[row_idx][1] else "0"
                     return "0"
                 
-                income_ytd = get_val(2)      # Row 3 (0-indexed: 2)
-                prepaid_tax = get_val(3)     # Row 4
-                net_income = get_val(5)      # Row 6
-                expenses_ytd = get_val(6)    # Row 7
-                family_cash = get_val(7)     # Row 8
-                personal_exp = get_val(8)    # Row 9
-                urgent_exp = get_val(9)      # Row 10
-                food_exp = get_val(10)       # Row 11
-                net_savings = get_val(14)    # Row 15
-                savings_rate = get_val(15)   # Row 16
-                
-                if who_spent == "prapa.yang":
-                    # 100% Thai - Mobile-friendly concise format
+                if user_name == "prapa.yang":
                     msg = (
                         f"📊 **ยอดคงเหลอครอบครัวหยาง**\n\n"
-                        f"💰 รายได้รวม: {income_ytd} บ.\n"
-                        f"💵 เงินได้จริง: {net_income} บ.\n"
-                        f"📊 รายจายรวม: {expenses_ytd} บ.\n"
+                        f"💰 รายไดรวม: {get_val(2)} บ.\n"
+                        f"💵 เงินไดจริง: {get_val(5)} บ.\n"
+                        f"📊 รายจายรวม: {get_val(6)} บ.\n"
                         f"─────────────────\n"
-                        f"💰 เงินออมสทธ: {net_savings} บ.\n"
-                        f"📈 อตราเงินออม: {savings_rate}%\n\n"
-                        f"🏠 ค่าใชจายครอบครัว: {family_cash} บ.\n"
-                        f"🧍 ค่าใชจายสวนตัว: {personal_exp} บ.\n"
-                        f"🚨 ค่าใชจายเรงด่วน: {urgent_exp} บ.\n"
-                        f"🍽️ อาหาร: {food_exp} บ."
+                        f"💰 เงินออมสทธ: {get_val(14)} บ.\n"
+                        f"🏠 ค่าใชจายครอบครัว: {get_val(7)} บ.\n"
+                        f"🧍 ค่าใชจายสวนตัว: {get_val(8)} บ.\n"
+                        f"🚨 ค่าใชจายเรงด่วน: {get_val(9)} บ."
                     )
                 else:
-                    # English version
                     msg = (
                         f"📊 **YANG FAMILY DASHBOARD**\n\n"
-                        f"💰 Total Income: {income_ytd} TWD\n"
-                        f"💵 Net Income: {net_income} TWD\n"
-                        f"📊 Total Expenses: {expenses_ytd} TWD\n"
+                        f"💰 Total Income: {get_val(2)} TWD\n"
+                        f"💵 Net Income: {get_val(5)} TWD\n"
+                        f"📊 Total Expenses: {get_val(6)} TWD\n"
                         f"─────────────────\n"
-                        f"💰 Net Savings: {net_savings} TWD\n"
-                        f"📈 Savings Rate: {savings_rate}%\n\n"
-                        f"🏠 Family Cash: {family_cash} TWD\n"
-                        f"🧍 Personal: {personal_exp} TWD\n"
-                        f"🚨 Urgent: {urgent_exp} TWD\n"
-                        f"🍽️ Food: {food_exp} TWD"
+                        f"💰 Net Savings: {get_val(14)} TWD\n"
+                        f"🏠 Family Cash: {get_val(7)} TWD\n"
+                        f"🧍 Personal: {get_val(8)} TWD\n"
+                        f"🚨 Urgent: {get_val(9)} TWD"
                     )
+                
+                send_bank_response(user_id, user_name, msg, "balance", get_main_menu(user_name))
             except Exception as e:
-                if who_spent == "prapa.yang":
-                    msg = f"⚠️ เกิดข้ดพลาด: {str(e)}"
-                else:
-                    msg = f"⚠️ Error reading dashboard: {str(e)}"
+                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
+                send_bank_response(user_id, user_name, reply, "balance")
         else:
-            if who_spent == "prapa.yang":
-                msg = "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
-            else:
-                msg = "⚠️ Database connection offline."
-        line_bot_api.push_message(
-            user_id,
-            [
-                TextSendMessage(text=msg, quick_reply=get_quick_replies(who_spent)),
-                TextSendMessage(text=get_polite_followup(who_spent, "balance"))
-            ]
-        )
-        log_chat(user_id, who_spent, "text", text, "Dashboard summary", "Balance check", "success")
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            send_bank_response(user_id, user_name, reply, "balance")
         return
-
-    # Categorization Processing (Supports English, Thai, Chinese)
-    system_prompt = """
-    Categorize the expenditure message into JSON. Support English, Thai, and Chinese input.
     
-    Output strictly valid JSON:
-    {"category": "Family Petty Cash"|"Personal"|"Urgent"|"Food"|"Transport"|"Medical"|"General", "amount": number, "vendor": "string"}
-    """
+    # === OPEN NEW ACCOUNT ===
+    if text == "Open new account" or text == "เปดบญชใหม":
+        if user_name == "prapa.yang":
+            reply = (
+                "🏦 **เปดบญชใหม**\n\n"
+                "อารยาชวยถามขอมูลเพ่มเตมครับ:\n"
+                "1. ชื่อบญชทตองการ?\n"
+                "2. ประเภทบญช? (กระเป๋า/ธนาคาร)\n"
+                "3. เงินเรมตนเทาไร?\n"
+                "4. เปดเพออะไรครับ?"
+            )
+        else:
+            reply = (
+                "🏦 **Open New Account**\n\n"
+                "I'll help you open a new account. Please tell me:\n"
+                "1. Account name?\n"
+                "2. Account type? (Pocket/Bank)\n"
+                "3. Initial deposit?\n"
+                "4. Purpose?"
+            )
+        send_bank_response(user_id, user_name, reply, "general")
+        return
     
-    try:
-        chat = di_client.chat.completions.create(
-            model="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ]
-        )
-        parsed = json.loads(chat.choices[0].message.content)
-        category = parsed.get("category", "General")
-        amount = parsed.get("amount", 0)
-        vendor = parsed.get("vendor", "N/A")
-
+    # === TRANSFER BETWEEN ACCOUNTS ===
+    if text == "Transfer between accounts" or text == "โอนระหวางบญช":
         if gc:
-            # Log to Raw_Expenses sheet
+            try:
+                acc = sh.worksheet("Accounts")
+                accounts = acc.get_all_values()[1:]  # Skip header
+                
+                if user_name == "prapa.yang":
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
+                    reply = f"📋 **บญชทมี**:\n\n{acc_list}\n\nเลอกบญชทตองการโอนครับ"
+                else:
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
+                    reply = f"📋 **Available Accounts**:\n\n{acc_list}\n\nSelect account to transfer from."
+                
+                send_bank_response(user_id, user_name, reply, "transfer")
+            except Exception as e:
+                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
+                send_bank_response(user_id, user_name, reply, "transfer")
+        else:
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            send_bank_response(user_id, user_name, reply, "transfer")
+        return
+    
+    # === EXPENSE LOGGING (AI Categorization) ===
+    # Use DeepSeek-V3 for text categorization (cheaper)
+    if di_client and gc:
+        try:
+            system_prompt = """
+            Categorize the expenditure message into JSON. Support English, Thai, Chinese.
+            Output strictly valid JSON:
+            {"category": "Family Petty Cash"|"Personal"|"Urgent"|"Food"|"Transport"|"Medical"|"General", "amount": number, "vendor": "string"}
+            """
+            
+            chat = di_client.chat.completions.create(
+                model="deepseek-ai/DeepSeek-V3",  # Cheaper model
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
+                ],
+                temperature=0.1
+            )
+            
+            parsed = json.loads(chat.choices[0].message.content)
+            category = parsed.get("category", "General")
+            amount = parsed.get("amount", 0)
+            vendor = parsed.get("vendor", "N/A")
+            
+            # Log to Raw_Expenses
             exp_sheet = sh.worksheet("Raw_Expenses")
             exp_sheet.append_row([
-                timestamp,      # Timestamp
-                who_spent,      # User
-                category,       # Category
-                amount,         # Amount (TWD)
-                vendor,         # Vendor/Note
-                "LINE",         # Payment Method
-                "No",           # Receipt?
-                "No",           # Tax Deductible?
-                text,           # Raw Input (EN/TH/ZH)
-                event.source.user_id if hasattr(event.source, 'user_id') else "group"  # Chat Log ID
+                timestamp, user_id, user_name, category, amount, vendor,
+                "LINE", "No", category, text, "th" if user_name == "prapa.yang" else "en", msg_id
             ])
             
-            # Concise trilingual reply - result only
-            if who_spent == "prapa.yang":
-                reply = f"✅ บันทกแลว: {category} {amount:,} บาท - {vendor}"
-            elif who_spent == "jack.yang":
-                reply = f"✅ Logged: {category} TWD {amount:,} - {vendor}"
+            # Confirmation
+            if user_name == "prapa.yang":
+                reply = f"✅ บันทกแลวครับ: {category} {amount:,} บาท - {vendor}"
             else:
-                reply = f"✅ 已记录：{category} {amount:,} 元 - {vendor}"
-        else:
-            reply = "⚠️ Database offline"
-        
-        log_chat(user_id, who_spent, "text", text, f"{category} {amount}", "Logged to Raw_Expenses", "success")
-        
-    except Exception as e:
-        reply = f"📝 {text}"
-        if who_spent == "prapa.yang":
-            reply = f"📝 ขอโทษค่ะ ไมเขาใจขอมูล: {text}"
-        log_chat(user_id, who_spent, "text", text, "", f"Parse error: {e}", "partial")
+                reply = f"✅ Logged: {category} {amount:,} TWD - {vendor}"
+            
+            send_bank_response(user_id, user_name, reply, "expense", get_expense_menu(user_name))
+            return
+            
+        except Exception as e:
+            print(f"⚠️ AI categorization failed: {e}")
     
-    # ALWAYS send with Quick Replies (even for unrecognized input)
-    try:
-        line_bot_api.push_message(
-            user_id,
-            [
-                TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
-                TextSendMessage(text=get_polite_followup(who_spent, "general"))
-            ]
-        )
-    except Exception as send_error:
-        print(f"⚠️ Failed to send message: {send_error}")
-        # Fallback: send without quick replies
-        line_bot_api.push_message(user_id, TextSendMessage(text=reply))
+    # === FALLBACK: Unrecognized Input ===
+    greeting = get_greeting(user_name)
+    send_bank_response(user_id, user_name, f"{greeting}\n\nYou said: {text}", "greeting", get_main_menu(user_name))
 
 # =============================================================================
-# 5. Vision Handler for Salary Slips (Taiwan Tax Compliance)
+# 5. Image Handler (Salary Slips & Receipts)
 # =============================================================================
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    global processed_messages  # MUST declare global to modify it!
+    global processed_messages
     
-    # DEDUPLICATION: Skip if already processed this message ID
     msg_id = event.message.id
     if msg_id in processed_messages:
-        print(f"⚠️ Skipping duplicate image message: {msg_id}")
-        return "OK"
+        return
     processed_messages[msg_id] = datetime.now()
     
-    # Clean old entries (older than 5 minutes)
-    from datetime import timedelta
-    cutoff = datetime.now() - timedelta(minutes=5)
-    processed_messages = {k: v for k, v in processed_messages.items() if v > cutoff}
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Handle both 1-on-1 chats and group chats
+    # Get user
     if hasattr(event.source, 'user_id') and event.source.user_id:
         user_id = event.source.user_id
     else:
         user_id = event.source.group_id if hasattr(event.source, 'group_id') else "unknown"
     
-    who_spent = "jack.yang"  # Default
-    # No prefix - use LINE User ID mapping (update with real IDs)
-    # To find your LINE User ID: send "jack.yang test" and check Cloud Run logs
-    FAMILY_MEMBERS = {
-        "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "jack.yang",  # Replace with YOUR real LINE User ID
-        "Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy": "prapa.yang"  # Replace with Prapa's real LINE User ID
-    }
-    who_spent = FAMILY_MEMBERS.get(user_id, "jack.yang")  # Default to jack.yang for unknown users
+    user_name = get_user_name(user_id, "jack.yang")
     
-    # Download Image from LINE
+    # Download image from LINE
+    message_content = line_bot_api.get_message_content(msg_id)
+    img_data = message_content.content
+    
+    if not di_client:
+        reply = "⚠️ AI service offline" if user_name != "prapa.yang" else "⚠️ บรการ AI ไมสามารถใชงานได"
+        send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    # Use Qwen3-VL for vision
     try:
-        message_content = line_bot_api.get_message_content(event.message.id)
-        img_bytes = io.BytesIO()
-        for chunk in message_content.iter_content():
-            img_bytes.write(chunk)
-        base64_image = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
-
-        # Smart Image Classifier - First determine if it's a salary slip or expense receipt
+        # Encode image to base64
+        img_base64 = base64.b64encode(img_data).decode('utf-8')
+        
+        # First: Classify image type (SALARY or RECEIPT)
         classifier_prompt = """
-        Analyze this image. Is it a SALARY SLIP/PAYROLL document or an EXPENSE RECEIPT?
-        
-        SALARY SLIP indicators: employee name, gross pay, withholding tax, NHI, pension, net pay, pay period
-        EXPENSE RECEIPT indicators: store name, items, total amount, date, receipt number
-        
-        Reply with ONLY one word: "SALARY" or "RECEIPT"
+        Classify this image: Is it a SALARY SLIP/PAYSTUB or an EXPENSE RECEIPT?
+        Reply with ONE word: SALARY or RECEIPT
         """
         
         classifier = di_client.chat.completions.create(
-            model="Qwen/Qwen3-VL-30B-A3B-Instruct",  # MUST use vision model for images!
+            model="Qwen/Qwen3-VL-30B-A3B-Instruct",
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "text", "text": classifier_prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
                 ]
             }]
         )
         
-        image_type = classifier.choices[0].message.content.strip().upper()
+        img_type = classifier.choices[0].message.content.strip().upper()
+        print(f"🖼️ Image classified as: {img_type}")
         
-        # ROUTE 1: It's a SALARY SLIP - Extract Taiwan tax data
-        if "SALARY" in image_type:
-            tax_prompt = """
-            Extract Taiwan Salary Slip data. Output strictly JSON with these keys:
-            {
-              "person": "Jack"|"Lee"|"Unknown",
-              "pay_period": "YYYY-MM",
-              "gross_pay": number,
-              "withholding_tax": number,
-              "nhi_premium": number,
-              "labor_insurance": number,
-              "employment_insurance": number,
-              "pension_voluntary_6": number,
-              "meal_allowance": number,
-              "other_deductions": number,
-              "net_pay": number
-            }
-            """
-
-            response = di_client.chat.completions.create(
-                model="Qwen/Qwen3-VL-30B-A3B-Instruct",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": tax_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }]
-            )
-            
-            raw_json = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
-            data = json.loads(raw_json)
-            
-            # VALIDATION: Skip if all zeros or invalid
-            if data.get("gross_pay", 0) == 0 and data.get("net_pay", 0) == 0:
-                reply = "⚠️ ไม่สามารถอ่านสลิปได้ กรุณาถ่ายภาพใหม่"
-                log_chat(user_id, who_spent, "image", "Salary Slip (invalid)", "", "Rejected - invalid data", "failed")
-            else:
-                if gc:
-                    # Log to Raw_Income sheet
-                    inc_sheet = sh.worksheet("Raw_Income")
-                    inc_sheet.append_row([
-                        timestamp,                      # Timestamp
-                        data.get("person", "Unknown"),  # Person
-                        "Salary",                       # Type
-                        data.get("gross_pay", 0),       # Gross Amount
-                        data.get("withholding_tax", 0), # Withholding Tax
-                        data.get("nhi_premium", 0),     # NHI
-                        data.get("labor_insurance", 0), # Labor Ins
-                        data.get("pension_voluntary_6", 0), # Pension 6%
-                        data.get("meal_allowance", 0),  # Meal Allowance
-                        data.get("other_deductions", 0),# Other Deductions
-                        data.get("net_pay", 0),         # Net Pay
-                        "Pending Refund",               # Tax Refund Status
-                        f"LINE:{event.message.id}"      # Source Document
-                    ])
-                    
-                    # Concise trilingual reply
-                    person = data.get("person", "Unknown")
-                    gross = f"{data.get('gross_pay', 0):,}"
-                    net = f"{data.get('net_pay', 0):,}"
-                    tax = f"{data.get('withholding_tax', 0):,}"
-                    
-                    if who_spent == "prapa.yang":
-                        reply = f"📄 บันทกสลปแลว: {person} รวม {gross} บาท ไดจรง {net} บาท (หกภาษ {tax} บาท)"
-                    elif who_spent == "jack.yang":
-                        reply = f"📄 Salary logged: {person} Gross {gross} TWD Net {net} TWD (Tax {tax} TWD)"
-                    else:
-                        reply = f"📄 薪资已记录：{person} 总额 {gross} 元 实发 {net} 元 (扣税 {tax} 元)"
-                    
-                    log_chat(user_id, who_spent, "image", "Salary Slip", f"Gross: {gross}", "Logged to Raw_Income", "success")
-                    
-                    # Send with polite follow-up
-                    line_bot_api.push_message(
-                        user_id,
-                        [
-                            TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)),
-                            TextSendMessage(text=get_polite_followup(who_spent, "salary"))
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # ROUTE 1: SALARY SLIP
+        if "SALARY" in img_type:
+            if gc:
+                extract_prompt = """
+                Extract from this Taiwan salary slip:
+                - person: Employee name
+                - gross_pay: Total salary (number)
+                - tax: Withholding tax (扣繳) (number)
+                - nhi: NHI (健保費) (number)
+                - labor_ins: Labor Insurance (勞保費) (number)
+                - pension: Pension 6% (勞退自提) (number)
+                - net_pay: Net pay (實發) (number)
+                
+                Output JSON only.
+                """
+                
+                extractor = di_client.chat.completions.create(
+                    model="Qwen/Qwen3-VL-30B-A3B-Instruct",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": extract_prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
                         ]
-                    )
+                    }]
+                )
+                
+                data = json.loads(extractor.choices[0].message.content)
+                person = data.get("person", "Unknown")
+                gross = data.get("gross_pay", 0)
+                tax = data.get("tax", 0)
+                net = data.get("net_pay", 0)
+                
+                # Log to Raw_Income
+                inc_sheet = sh.worksheet("Raw_Income")
+                inc_sheet.append_row([
+                    timestamp, user_id, person, "Salary", gross, "NTD",
+                    tax, data.get("nhi", 0), data.get("labor_ins", 0),
+                    data.get("pension", 0), 0, net, "Image OCR",
+                    "th" if user_name == "prapa.yang" else "en"
+                ])
+                
+                # Confirmation
+                if user_name == "prapa.yang":
+                    reply = f"📄 บันทกสลปแลวครับ! {person} รวม {gross:,} บาท ไดจริง {net:,} บาท"
                 else:
-                    reply = "⚠️ Database offline"
-                    log_chat(user_id, who_spent, "image", "Salary Slip", "", "Failed - Sheets offline", "failed")
-                    line_bot_api.push_message(user_id, TextSendMessage(text=reply))
-        
-        # ROUTE 2: It's an EXPENSE RECEIPT - Extract amount and vendor
-        else:
-            expense_prompt = """
-            Extract expense receipt data. Output strictly JSON:
-            {
-              "vendor": "store name",
-              "amount": number,
-              "items": ["item1", "item2"]
-            }
-            """
-            
-            response = di_client.chat.completions.create(
-                model="Qwen/Qwen3-VL-30B-A3B-Instruct",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": expense_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }]
-            )
-            
-            raw_json = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
-            data = json.loads(raw_json)
-            
-            amount = data.get("amount", 0)
-            vendor = data.get("vendor", "Unknown")
-            items = ", ".join(data.get("items", []))
-            
-            if amount > 0:
-                if gc:
-                    # Log to Raw_Expenses sheet
-                    exp_sheet = sh.worksheet("Raw_Expenses")
-                    exp_sheet.append_row([
-                        timestamp,
-                        who_spent,
-                        "Food",  # Default category for receipt images
-                        amount,
-                        f"{vendor} - {items}",
-                        "LINE",
-                        "Yes",  # Has receipt
-                        "No",   # Not tax deductible
-                        f"Receipt image: {vendor}",
-                        event.source.user_id if hasattr(event.source, 'user_id') else "group"
-                    ])
-                    
-                    # Concise trilingual reply
-                    if who_spent == "prapa.yang":
-                        reply = f"✅ บันทึกใบเสร็จแล้ว: {vendor} {amount:,} บาท"
-                    elif who_spent == "jack.yang":
-                        reply = f"✅ Receipt logged: {vendor} TWD {amount:,}"
-                    else:
-                        reply = f"✅ 收据已记录：{vendor} {amount:,} 元"
-                    
-                    log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", f"{amount} TWD", "Logged to Raw_Expenses", "success")
-                else:
-                    reply = "⚠️ Database offline"
+                    reply = f"📄 Salary logged: {person} Gross {gross:,} TWD Net {net:,} TWD"
+                
+                send_bank_response(user_id, user_name, reply, "salary", get_main_menu(user_name))
             else:
-                reply = "📷 ไม่สามารถอ่านจำนวนเงน กรุณาพิมพ์เอง: 'ร้านค้า จำนวน'"
-                log_chat(user_id, who_spent, "image", f"Receipt: {vendor}", "", "Failed - no amount", "partial")
+                reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+                send_bank_response(user_id, user_name, reply, "salary")
         
+        # ROUTE 2: EXPENSE RECEIPT
+        else:
+            if gc:
+                extract_prompt = """
+                Extract from this receipt:
+                - amount: Total amount (number)
+                - vendor: Store/restaurant name
+                - category: Food|Transport|Medical|General
+                
+                Output JSON only.
+                """
+                
+                extractor = di_client.chat.completions.create(
+                    model="Qwen/Qwen3-VL-30B-A3B-Instruct",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": extract_prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
+                        ]
+                    }]
+                )
+                
+                data = json.loads(extractor.choices[0].message.content)
+                amount = data.get("amount", 0)
+                vendor = data.get("vendor", "Unknown")
+                category = data.get("category", "General")
+                
+                # Log to Raw_Expenses
+                exp_sheet = sh.worksheet("Raw_Expenses")
+                exp_sheet.append_row([
+                    timestamp, user_id, user_name, category, amount, vendor,
+                    "LINE", "Yes", category, "Image OCR",
+                    "th" if user_name == "prapa.yang" else "en", msg_id
+                ])
+                
+                # Confirmation
+                if user_name == "prapa.yang":
+                    reply = f"✅ บันทกแลวครับ: {category} {amount:,} บาท - {vendor}"
+                else:
+                    reply = f"✅ Logged: {category} {amount:,} TWD - {vendor}"
+                
+                send_bank_response(user_id, user_name, reply, "expense", get_expense_menu(user_name))
+            else:
+                reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+                send_bank_response(user_id, user_name, reply, "expense")
+    
     except Exception as e:
-        reply = f"⚠️ Image processing failed: {str(e)}"
-        log_chat(user_id, who_spent, "image", "Unknown", "", f"Error: {e}", "failed")
-
-    # Send ONLY ONE reply (no duplicates)
-    line_bot_api.push_message(user_id, TextSendMessage(text=reply, quick_reply=get_quick_replies(who_spent)))
+        print(f"⚠️ Image processing failed: {e}")
+        reply = "⚠️ Could not read image. Please try again or enter manually." if user_name != "prapa.yang" else "⚠️ ไมสามารถอานรูปได กรุณาลองใหมหรอพมพขอมูลดวยตนเองครับ"
+        send_bank_response(user_id, user_name, reply, "general")
 
 # =============================================================================
 # 6. Server Entry Point
 # =============================================================================
+@app.get("/")
+def root():
+    return {"status": "Yang Family Finance Agent Active", "sheets": "12 tabs configured"}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    uvicorn.run(app, host="0.0.0.0", port=8080)
