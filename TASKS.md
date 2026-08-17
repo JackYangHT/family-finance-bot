@@ -1,5 +1,7 @@
 # Yang Family Finance Bot - Project Tasks
 
+**📍 Local Project Folder:** `C:/Users/Jack/Documents/family finance/`  
+**📂 Code Repository:** `C:/Users/Jack/Documents/family finance/family-finance-bot/`  
 **Last Updated:** 2026-08-17  
 **Current Sprint:** Dual Approval System + Cloud Run Migration  
 **Next Review:** 2026-08-24
@@ -106,16 +108,68 @@
 
 ## 🚧 IN PROGRESS
 
-### 🐛 Bug Fixes & Improvements
-- [ ] **Fix LINE User ID mapping** (PRIORITY: HIGH)
-  - [ ] Update FAMILY_MEMBERS dict with real LINE User IDs
-  - [ ] Alternative: Use message prefix detection (already implemented)
-  - [ ] Test with actual LINE User IDs from Jack and Prapa
+### 🎨 LINE Flex Message UI Implementation (PRIORITY: HIGH)
+- [ ] **Approval Cards** - Replace text commands with interactive JSON cards
+  - [ ] Design Approval Request Card template (JSON)
+  - [ ] Add Approve/Reject buttons with callback actions
+  - [ ] Implement card sender function in app.py
+  - [ ] Test with Jack → Prapa approval flow
+  - [ ] Test with Prapa → Jack approval flow
 
-- [ ] **Improve approval notifications** (PRIORITY: MEDIUM)
-  - [ ] Send push notification to approver when request created
-  - [ ] Add "View Pending" button to main menu
-  - [ ] Show approval status in real-time
+- [ ] **Financial Summary Cards** - Replace 11-line text balance
+  - [ ] Design Dashboard Card template (color-coded, mobile-friendly)
+  - [ ] Pull data from Dashboard_Summary (FORMATTED_VALUE)
+  - [ ] Show YTD totals, net worth, budget utilization %
+  - [ ] Bilingual support (English/Chinese for Jack, Thai for Prapa)
+
+- [ ] **Receipt Confirmation Cards** - OCR accuracy verification
+  - [ ] Design Receipt Card template (vendor, amount, category)
+  - [ ] Add Confirm/Edit buttons
+  - [ ] If Edit: prompt user to correct fields
+  - [ ] If Confirm: commit to Google Sheets
+
+- [ ] **Weekly Wrap-Up Cards** - Auto-sent every Friday
+  - [ ] Design Weekly Summary Card template
+  - [ ] English/Chinese version for Jack
+  - [ ] Thai version for Prapa (formal, คณนายอารยา หยาง)
+  - [ ] Include: MTD spending, budget remaining, top categories
+
+### 🏦 Pre-Seeded Account Architecture (PRIORITY: HIGH)
+- [ ] **Hardcode 5 Pockets in Accounts tab**
+  - [ ] Family Petty Cash (NTD)
+  - [ ] Urgent Fund (NTD)
+  - [ ] Son's USD Fixed (USD)
+  - [ ] Wife's USD Fixed (USD)
+  - [ ] Jack's Personal (NTD/USD)
+
+- [ ] **Update Main Menu**
+  - [ ] Replace "🏦 Open Account" with "⚙️ Account Settings"
+  - [ ] Add "📝 Request New Category" option
+  - [ ] New category requests → Approval Card to spouse
+
+### ⚡ Asynchronous Webhook Processing (PRIORITY: MEDIUM)
+- [ ] **Google Cloud Tasks Setup**
+  - [ ] Enable Cloud Tasks API
+  - [ ] Create task queue (family-finance-tasks)
+  - [ ] Configure retry policy (3 attempts, exponential backoff)
+
+- [ ] **Update app.py Webhook Handler**
+  - [ ] Instant 200 OK response
+  - [ ] Send "Processing..." text message immediately
+  - [ ] Queue OCR task to Cloud Tasks
+  - [ ] Background worker processes OCR → sends result card
+
+### 📅 Scheduled Push Notifications (PRIORITY: MEDIUM)
+- [ ] **Google Cloud Scheduler Setup**
+  - [ ] Create weekly job (Friday 5:00 PM Asia/Bangkok)
+  - [ ] Trigger Cloud Run endpoint: `/weekly-wrap-up`
+  - [ ] Generate Flex Message cards for Jack & Prapa
+  - [ ] Push via LINE Push API
+
+- [ ] **Budget Alert Notifications**
+  - [ ] Daily check: if category > 80% budget → alert
+  - [ ] Push notification with warning card
+  - [ ] Include remaining budget amount
 
 ---
 
@@ -257,11 +311,96 @@
 
 ## 🎯 Next Sprint Goals (2026-08-18 to 2026-08-24)
 
-1. **Fix LINE User ID mapping** (HIGH priority)
-2. **Implement push notifications for approvals** (MEDIUM priority)
-3. **Add OCR fallback flow** (MEDIUM priority)
-4. **Create monthly report generator** (LOW priority)
-5. **Add budget alerts (80% threshold)** (LOW priority)
+**SPRINT THEME: LINE Flex Message UI + Pre-Seeded Accounts**
+
+### HIGH PRIORITY (Must Complete)
+1. **Design & implement Approval Cards** (replace text commands)
+2. **Pre-seed 5 pockets in Accounts tab** (remove dynamic account creation)
+3. **Update main menu** (Open Account → Account Settings)
+4. **Design Financial Summary Card** (dashboard replacement)
+
+### MEDIUM PRIORITY (Nice to Have)
+5. **Receipt Confirmation Card** (OCR verification)
+6. **Setup Google Cloud Tasks** (async processing foundation)
+7. **Weekly Wrap-Up Card design** (Friday notifications)
+
+### LOW PRIORITY (If Time Permits)
+8. **Budget alert threshold** (80% warning)
+9. **Fix LINE User ID mapping** (use real IDs from LINE Console)
+
+---
+
+## 🏗️ TECHNICAL ARCHITECTURE UPGRADES
+
+### Current Architecture (v2.1)
+```
+LINE → Cloud Run (FastAPI) → DeepInfra AI + Google Sheets → Text Response
+```
+**Limitations:**
+- Text-heavy responses (11-line limit)
+- Manual approval commands (`Approve REQ...`)
+- Synchronous OCR processing (timeout risk)
+- No proactive notifications
+
+### Target Architecture (v3.0 - Flex Message + Async)
+```
+LINE → Cloud Run (FastAPI) → [Instant 200 OK + "Processing..." text]
+                             ↓
+                    Google Cloud Tasks (Queue)
+                             ↓
+                    Background Worker (OCR/AI)
+                             ↓
+                    LINE Flex Message Cards (Result)
+```
+**Benefits:**
+- ✅ App-like interactive cards
+- ✅ No webhook timeouts
+- ✅ Proactive notifications (Scheduler)
+- ✅ Better UX (Confirm/Edit buttons)
+
+### Migration Plan
+| Phase | Component | Status | Target Date |
+|-------|-----------|--------|-------------|
+| 1 | Approval Cards | 🚧 In Progress | 2026-08-20 |
+| 2 | Financial Summary Cards | 🚧 In Progress | 2026-08-21 |
+| 3 | Receipt Confirmation Cards | 🚧 In Progress | 2026-08-22 |
+| 4 | Google Cloud Tasks | 📋 Planned | 2026-08-23 |
+| 5 | Weekly Wrap-Up (Scheduler) | 📋 Planned | 2026-08-25 |
+| 6 | Pre-Seeded Accounts | 🚧 In Progress | 2026-08-19 |
+
+---
+
+## 📝 HOW TO ADD NEW REQUESTS
+
+**When Jack adds a new feature request:**
+
+1. **Tell the agent** - Just say what you want (e.g., "Add voice input for expenses")
+2. **Agent will update both files:**
+   - Add to `TASKS.md` → Backlog section with subtasks
+   - Add to `BLUEPRINT.md` → Future Enhancements section
+3. **Track progress** - Agent marks tasks complete as implemented
+4. **Review weekly** - Check TASKS.md every Sunday for status updates
+
+**Example:**
+```
+You: "I want the bot to send me a monthly PDF report"
+
+Agent adds to TASKS.md:
+### 📊 Advanced Analytics
+- [ ] **Monthly PDF reports**
+  - [ ] Auto-generate on 1st of each month
+  - [ ] Email to Jack and Prapa
+  - [ ] Include charts, trends, budget variance
+
+Agent adds to BLUEPRINT.md:
+### 🎯 Future Enhancements (Backlog)
+6. **Monthly Reports:** Auto-generate PDF summary email
+```
+
+**Files Location:**
+- `C:/Users/Jack/Documents/family finance/BLUEPRINT.md` - System reference
+- `C:/Users/Jack/Documents/family finance/TASKS.md` - Task tracking
+- `C:/Users/Jack/Documents/family finance/IDEA.md` - Original roadmap
 
 ---
 

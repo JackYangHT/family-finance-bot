@@ -1,5 +1,9 @@
 # Yang Family Financial & Tax Agent - Project Blueprint
 
+**📍 Local Project Folder:** `C:/Users/Jack/Documents/family finance/`  
+**📂 Code Repository:** `C:/Users/Jack/Documents/family finance/family-finance-bot/`  
+**🔗 GitHub:** https://github.com/JackYangHT/family-finance-bot
+
 ## 📋 Project Overview
 
 **Project Name:** Yang Family Financial & Tax Agent (LINE Bot)  
@@ -207,16 +211,25 @@
 
 ## 🎯 Future Enhancements (Backlog)
 
-1. **Push Notifications:** Notify approver via LINE when request pending
-2. **Budget Alerts:** Warn when category exceeds 80% of budget
-3. **Multi-Currency Dashboard:** Show USD/NTD net worth with exchange rates
-4. **Recurring Expenses:** Auto-log monthly bills (rent, utilities)
-5. **Receipt Image Storage:** Save OCR'd images to Google Drive
-6. **Monthly Reports:** Auto-generate PDF summary email
-7. **Voice Input:** Support voice messages for expense logging
-8. **Investment Tracking:** Add stocks/crypto portfolio tabs
-9. **Debt Management:** Track loans, credit card balances
-10. **Financial Goals:** Set and track savings goals (e.g., "House Fund: 5M TWD by 2030")
+### 🎨 LINE Flex Message UI (PRIORITY: HIGH - Active Development)
+1. **Approval Cards** - Interactive JSON cards with Approve/Reject buttons (replaces text commands)
+2. **Financial Summary Cards** - Color-coded dashboard with YTD totals, net worth, budget utilization
+3. **Receipt Confirmation Cards** - Show extracted OCR data with Confirm/Edit buttons
+4. **Weekly Wrap-Up Cards** - Auto-sent Friday afternoon (English for Jack, Thai for Prapa)
+
+### 🏦 Account Architecture (PRIORITY: HIGH - Active Development)
+5. **Pre-seeded 5 Pockets** - Hardcode accounts during deployment (no dynamic creation)
+6. **Replace "Open Account"** with "Account Settings" / "Request New Category"
+7. **New pocket requests** → Approval Card to spouse before creation
+
+### ⚡ Async Processing (PRIORITY: MEDIUM - Planned)
+8. **Google Cloud Tasks** - Queue OCR requests to prevent LINE webhook timeouts
+9. **Instant 200 OK** → "Processing..." message → Background task → Result card
+
+### 📅 Scheduled Notifications (PRIORITY: MEDIUM - Planned)
+10. **Google Cloud Scheduler** - Weekly Friday wrap-up notifications
+11. **Budget alerts** - Push when category exceeds 80% of budget
+12. **Monthly reports** - Auto-generate PDF summary on 1st of month
 
 ---
 
