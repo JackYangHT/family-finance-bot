@@ -347,7 +347,7 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 3, 'data': data}
             
-            reply = f"✅ To: {data['to_account']}\n\nEnter amount to transfer:" if user_name != "prapa.yang" else f"✅ ไป: {data['to_account']}\n\nใสจำนวนเงินทตองการโอน:"
+            reply = f"✅ To: {data['to_account']}\n\nHow much would you like to transfer?" if user_name != "prapa.yang" else f"✅ ไป: {data['to_account']}\n\nตองการโอนจำนวนเทาไหรครับ?"
             # No Quick Reply during flow
             send_bank_response(user_id, user_name, reply, "transfer", None)
             return
@@ -369,14 +369,14 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 4, 'data': data}
             
-            reply = f"💰 Amount: {amount:,.2f} NTD\n\nEnter purpose/note for transfer:" if user_name != "prapa.yang" else f"💰 จำนวน: {amount:,.2f} บาท\n\nใสเหตผล/หมายเหตุในการโอน:"
+            reply = f"💰 Amount: {amount:,.2f} NTD\n\nWhat's this transfer for? (e.g., Family dinner, Emergency, etc.)" if user_name != "prapa.yang" else f"💰 จำนวน: {amount:,.2f} บาท\n\nโอนเงินนี้เพืออะไรครับ? (เช่น ค่าอาหารครอบครัว, เรงดวน, ฯลฯ)"
             # No Quick Reply during flow
             send_bank_response(user_id, user_name, reply, "transfer", None)
             return
             
         except ValueError:
-            reply = "⚠️ Invalid amount. Please enter a number (e.g., 1000):" if user_name != "prapa.yang" else "⚠️ จำนวนเงินไมถกตอง กรุณาใสตัวเลข (เชน 1000):"
-            send_bank_response(user_id, user_name, reply, "transfer")
+            reply = "Hmm, that doesn't look like an amount. Could you enter just the number? (e.g., 1000)" if user_name != "prapa.yang" else "ขอโทษครับ ดูเหมือนยังไมใชจำนวนเงิน กรุณาใสเฉพาะตัวเลขครับ (เช่น 1000)"
+            send_bank_response(user_id, user_name, reply, "transfer", None)
             return
     
     # Step 4: Purpose - CREATE APPROVAL REQUEST
