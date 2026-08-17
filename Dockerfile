@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY setup_database.py .
 COPY approval_workflow.py .
+COPY flex_message_templates.py .
 
 # Set default PORT (Cloud Run will override this)
 ENV PORT=8080
