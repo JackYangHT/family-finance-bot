@@ -28,6 +28,9 @@ from approval_workflow import (
 )
 from flex_message_templates import create_approval_card, create_receipt_confirmation_card
 
+# Global state for multi-step flows
+user_flow_state = {}  # {user_id: {'flow': 'transfer', 'step': 1, 'data': {...}}}
+
 # Print startup debug info
 print("🚀 Yang Family Finance Bot starting...")
 print(f"  PORT: {os.environ.get('PORT', '8080')}")
@@ -227,6 +230,143 @@ def get_polite_followup(user_name, context="general"):
         }
         return followups.get(context, followups["general"])
 
+def handle_transfer_step(user_id, user_name, text, flow_state):
+    """Handle multi-step transfer flow"""
+    step = flow_state['step']
+    data = flow_state.get('data', {})
+    
+    print(f"💸 Transfer Step {step}: {text}")
+    
+    # Step 1: User selected source account
+    if step == 1:
+        try:
+            acc = sh.worksheet("Accounts")
+            accounts = acc.get_all_values()[1:]
+            
+            if text.isdigit():
+                account_idx = int(text) - 1
+            else:
+                for i, row in enumerate(accounts):
+                    if text.lower() in row[1].lower():
+                        account_idx = i
+                        break
+                else:
+                    account_idx = -1
+            
+            if account_idx < 0 or account_idx >= len(accounts):
+                reply = "⚠️ Invalid account. Please select 1-5 or type account name." if user_name != "prapa.yang" else "⚠️ บัญชไมถกตอง กรุณาเลือก 1-5 หรือพิมพชื่อบัญช"
+                send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+                del user_flow_state[user_id]
+                return
+            
+            data['from_account'] = accounts[account_idx][1]
+            data['from_account_idx'] = account_idx
+            
+            user_flow_state[user_id] = {'flow': 'transfer', 'step': 2, 'data': data}
+            
+            reply = f"✅ From: {data['from_account']}\n\nSelect destination account (1-5 or name):" if user_name != "prapa.yang" else f"✅ จาก: {data['from_account']}\n\nเลือกบัญชปลายทาง (1-5 หรือพิมพชื่อ):"
+            send_bank_response(user_id, user_name, reply, "transfer")
+            return
+            
+        except Exception as e:
+            reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาด: {e}"
+            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+            del user_flow_state[user_id]
+            return
+    
+    # Step 2: Destination account
+    elif step == 2:
+        try:
+            acc = sh.worksheet("Accounts")
+            accounts = acc.get_all_values()[1:]
+            
+            if text.isdigit():
+                account_idx = int(text) - 1
+            else:
+                for i, row in enumerate(accounts):
+                    if text.lower() in row[1].lower():
+                        account_idx = i
+                        break
+                else:
+                    account_idx = -1
+            
+            if account_idx < 0 or account_idx >= len(accounts):
+                reply = "⚠️ Invalid account. Please select 1-5 or type account name." if user_name != "prapa.yang" else "⚠️ บัญชไมถกตอง กรุณาเลือก 1-5 หรือพิมพชื่อบัญช"
+                send_bank_response(user_id, user_name, reply, "transfer")
+                return
+            
+            if account_idx == data['from_account_idx']:
+                reply = "⚠️ Cannot transfer to same account. Select different account." if user_name != "prapa.yang" else "⚠️ ไมสามารถโอนไปบัญชเดียวกัน กรุณาเลือกบัญชใหม"
+                send_bank_response(user_id, user_name, reply, "transfer")
+                return
+            
+            data['to_account'] = accounts[account_idx][1]
+            data['to_account_idx'] = account_idx
+            
+            user_flow_state[user_id] = {'flow': 'transfer', 'step': 3, 'data': data}
+            
+            reply = f"✅ To: {data['to_account']}\n\nEnter amount to transfer:" if user_name != "prapa.yang" else f"✅ ไป: {data['to_account']}\n\nใสจำนวนเงินทตองการโอน:"
+            send_bank_response(user_id, user_name, reply, "transfer")
+            return
+            
+        except Exception as e:
+            reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาด: {e}"
+            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+            del user_flow_state[user_id]
+            return
+    
+    # Step 3: Amount
+    elif step == 3:
+        try:
+            amount = float(text.replace(',', ''))
+            if amount <= 0:
+                raise ValueError("Amount must be positive")
+            
+            data['amount'] = amount
+            
+            user_flow_state[user_id] = {'flow': 'transfer', 'step': 4, 'data': data}
+            
+            reply = f"💰 Amount: {amount:,.2f} NTD\n\nEnter purpose/note for transfer:" if user_name != "prapa.yang" else f"💰 จำนวน: {amount:,.2f} บาท\n\nใสเหตผล/หมายเหตุในการโอน:"
+            send_bank_response(user_id, user_name, reply, "transfer")
+            return
+            
+        except ValueError:
+            reply = "⚠️ Invalid amount. Please enter a number (e.g., 1000):" if user_name != "prapa.yang" else "⚠️ จำนวนเงินไมถกตอง กรุณาใสตัวเลข (เชน 1000):"
+            send_bank_response(user_id, user_name, reply, "transfer")
+            return
+    
+    # Step 4: Purpose - CREATE APPROVAL REQUEST
+    elif step == 4:
+        try:
+            data['purpose'] = text
+            
+            from approval_workflow import create_approval_request
+            request_id = create_approval_request(
+                spreadsheet=sh,
+                requester=user_name,
+                request_type='transfer',
+                details=data
+            )
+            
+            del user_flow_state[user_id]
+            
+            reply = f"✅ Transfer request created!\n\nFrom: {data['from_account']}\nTo: {data['to_account']}\nAmount: {data['amount']:,.2f} NTD\nPurpose: {data['purpose']}\n\nRequest ID: {request_id}\n\nWaiting for approval..." if user_name != "prapa.yang" else f"✅ สรางคำขอโอนแลว!\n\nจาก: {data['from_account']}\nไป: {data['to_account']}\nจำนวน: {data['amount']:,.2f} บาท\nเหตผล: {data['purpose']}\n\nรหัสคำขอ: {request_id}\n\nรอการอนุมัติ..."
+            
+            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+            return
+            
+        except Exception as e:
+            reply = f"⚠️ Error creating request: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาดในการสรางคำขอ: {e}"
+            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+            del user_flow_state[user_id]
+            return
+    
+    # Unknown step - reset
+    else:
+        del user_flow_state[user_id]
+        reply = "⚠️ Transfer session expired. Please start over." if user_name != "prapa.yang" else "⚠️ รายการโอนหมดเวลา กรุณาเรมใหม"
+        send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
+
 def send_bank_response(user_id, user_name, main_text, followup_context="general", quick_reply=None):
     """Send professional two-message bank response"""
     try:
@@ -365,6 +505,14 @@ def handle_text(event):
         text = text.replace("prapa.yang", "", 1).strip()
     
     print(f"📝 User: {user_name} ({user_id[:10]}...), Text: {text[:50]}")
+    
+    # === CHECK ACTIVE FLOW STATE FIRST ===
+    if user_id in user_flow_state:
+        flow = user_flow_state[user_id]
+        print(f"🔄 Continuing flow: {flow['flow']} step {flow['step']}")
+        
+        if flow['flow'] == 'transfer':
+            return handle_transfer_step(user_id, user_name, text, flow)
     
     # === GREETING / MAIN MENU ===
     if text.lower() in ["hello", "hi", "สวัสดี", "menu", "เมน"]:
@@ -617,10 +765,13 @@ def handle_text(event):
                 
                 if user_name == "prapa.yang":
                     acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
-                    reply = f"📋 **บญชทมี**:\n\n{acc_list}\n\nเลอกบญชทตองการโอนครับ"
+                    reply = f"📋 **บญชทมี**:\n\n{acc_list}\n\nเลอกบญชทตองการโอนครับ\n⚠️ คณแจ๊คตองอนมตกอนโอนครับ"
                 else:
                     acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
-                    reply = f"📋 **Available Accounts**:\n\n{acc_list}\n\nSelect account to transfer from."
+                    reply = f"📋 **Available Accounts**:\n\n{acc_list}\n\nSelect account to transfer from.\n⚠️ This requires Prapa's approval."
+                
+                # Set flow state for step 1
+                user_flow_state[user_id] = {'flow': 'transfer', 'step': 1, 'data': {}}
                 
                 send_bank_response(user_id, user_name, reply, "transfer")
             except Exception as e:
