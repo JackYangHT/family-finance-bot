@@ -16,6 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
+COPY test_app.py .
 COPY app.py .
 COPY setup_database.py .
 COPY approval_workflow.py .
@@ -28,5 +29,5 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run the application using shell format for env var expansion
-CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "exec uvicorn test_app:app --host 0.0.0.0 --port ${PORT}"]
 
