@@ -29,3 +29,4 @@ EXPOSE 8080
 
 # Run the application using shell format for env var expansion
 CMD exec uvicorn app:app --host 0.0.0.0 --port ${PORT}
+
