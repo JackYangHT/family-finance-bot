@@ -221,14 +221,14 @@ def get_polite_followup(user_name, context="general"):
 def send_bank_response(user_id, user_name, main_text, followup_context="general", quick_reply=None):
     """Send professional two-message bank response"""
     try:
-        # Message 1: Main response + Quick Reply
-        msg1 = TextSendMessage(
-            text=main_text,
+        # Message 1: Main response (no Quick Reply)
+        msg1 = TextSendMessage(text=main_text)
+        
+        # Message 2: Polite follow-up + Quick Reply (LINE shows QR on last message)
+        msg2 = TextSendMessage(
+            text=get_polite_followup(user_name, followup_context),
             quick_reply=quick_reply or get_main_menu(user_name)
         )
-        
-        # Message 2: Polite follow-up (no buttons)
-        msg2 = TextSendMessage(text=get_polite_followup(user_name, followup_context))
         
         line_bot_api.push_message(user_id, [msg1, msg2])
         return True
