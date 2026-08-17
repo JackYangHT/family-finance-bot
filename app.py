@@ -212,12 +212,11 @@ def get_transfer_source_menu(user_name):
             for i, row in enumerate(accounts):
                 if row and row[1]:  # Has account name
                     account_name = row[1]
-                    currency = row[3] if len(row) > 3 else ""
-                    label = f"{i+1}. {account_name} ({currency})"
-                    # Truncate if too long (LINE max 20 chars for label)
-                    if len(label) > 20:
-                        label = f"{account_name[:17]}..."
-                    buttons.append(QuickReplyButton(action=MessageAction(label=label[:20], text=str(i+1))))
+                    # Shorten for button label (LINE max 20 chars)
+                    short_name = account_name[:18].strip()
+                    if len(account_name) > 18:
+                        short_name += "..."
+                    buttons.append(QuickReplyButton(action=MessageAction(label=short_name, text=f"FROM:{account_name}")))
             
             if buttons:
                 return QuickReply(items=buttons)
@@ -227,19 +226,72 @@ def get_transfer_source_menu(user_name):
     # Fallback
     if user_name == "prapa.yang":
         return QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="1. Family Petty Cash", text="1")),
-            QuickReplyButton(action=MessageAction(label="2. Urgent Fund", text="2")),
-            QuickReplyButton(action=MessageAction(label="3. Son's USD", text="3")),
-            QuickReplyButton(action=MessageAction(label="4. Wife's USD", text="4")),
-            QuickReplyButton(action=MessageAction(label="5. Jack's Personal", text="5")),
+            QuickReplyButton(action=MessageAction(label="Family Petty Cash", text="FROM:Family Petty Cash")),
+            QuickReplyButton(action=MessageAction(label="Urgent Fund", text="FROM:Urgent Fund")),
+            QuickReplyButton(action=MessageAction(label="Son's USD", text="FROM:Son's USD Fixed")),
+            QuickReplyButton(action=MessageAction(label="Wife's USD", text="FROM:Wife's USD Fixed")),
+            QuickReplyButton(action=MessageAction(label="Jack's Personal", text="FROM:Jack's Personal")),
         ])
     else:
         return QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="1. Family Petty Cash", text="1")),
-            QuickReplyButton(action=MessageAction(label="2. Urgent Fund", text="2")),
-            QuickReplyButton(action=MessageAction(label="3. Son's USD", text="3")),
-            QuickReplyButton(action=MessageAction(label="4. Wife's USD", text="4")),
-            QuickReplyButton(action=MessageAction(label="5. Jack's Personal", text="5")),
+            QuickReplyButton(action=MessageAction(label="Family Petty Cash", text="FROM:Family Petty Cash")),
+            QuickReplyButton(action=MessageAction(label="Urgent Fund", text="FROM:Urgent Fund")),
+            QuickReplyButton(action=MessageAction(label="Son's USD", text="FROM:Son's USD Fixed")),
+            QuickReplyButton(action=MessageAction(label="Wife's USD", text="FROM:Wife's USD Fixed")),
+            QuickReplyButton(action=MessageAction(label="Jack's Personal", text="FROM:Jack's Personal")),
+        ])
+
+def get_transfer_dest_menu(user_name, from_account):
+    """Transfer destination account Quick Reply buttons (excludes source)"""
+    if gc:
+        try:
+            acc = sh.worksheet("Accounts")
+            accounts = acc.get_all_values()[1:]
+            
+            buttons = []
+            for i, row in enumerate(accounts):
+                if row and row[1] and row[1] != from_account:  # Exclude source account
+                    account_name = row[1]
+                    short_name = account_name[:18].strip()
+                    if len(account_name) > 18:
+                        short_name += "..."
+                    buttons.append(QuickReplyButton(action=MessageAction(label=short_name, text=f"TO:{account_name}")))
+            
+            if buttons:
+                return QuickReply(items=buttons)
+        except:
+            pass
+    
+    # Fallback - exclude from_account
+    all_accounts = ["Family Petty Cash", "Urgent Fund", "Son's USD Fixed", "Wife's USD Fixed", "Jack's Personal"]
+    dest_accounts = [a for a in all_accounts if a != from_account]
+    
+    if user_name == "prapa.yang":
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label=acc[:18], text=f"TO:{acc}")) for acc in dest_accounts
+        ])
+    else:
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label=acc[:18], text=f"TO:{acc}")) for acc in dest_accounts
+        ])
+
+def get_purpose_menu(user_name):
+    """Purpose suggestion buttons"""
+    if user_name == "prapa.yang":
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="🍽️ ค่าอาหาร", text="PURPOSE:ค่าอาหารครอบครัว")),
+            QuickReplyButton(action=MessageAction(label="🚨 เรงดวน", text="PURPOSE:เริงดวน")),
+            QuickReplyButton(action=MessageAction(label="📦 ค่าบิล", text="PURPOSE:ชาระบิล")),
+            QuickReplyButton(action=MessageAction(label="🎁 ของขวญ", text="PURPOSE:ของขวญ")),
+            QuickReplyButton(action=MessageAction(label="อืนๆ", text="PURPOSE:อื่นๆ")),
+        ])
+    else:
+        return QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="🍽️ Family dinner", text="PURPOSE:Family dinner")),
+            QuickReplyButton(action=MessageAction(label="🚨 Emergency", text="PURPOSE:Emergency")),
+            QuickReplyButton(action=MessageAction(label="📦 Bills", text="PURPOSE:Bills")),
+            QuickReplyButton(action=MessageAction(label="🎁 Gift", text="PURPOSE:Gift")),
+            QuickReplyButton(action=MessageAction(label="📝 Other", text="PURPOSE:Other")),
         ])
 
 def get_polite_followup(user_name, context="general"):
@@ -272,94 +324,82 @@ def get_polite_followup(user_name, context="general"):
         return followups.get(context, followups["general"])
 
 def handle_transfer_step(user_id, user_name, text, flow_state):
-    """Handle multi-step transfer flow"""
+    """Handle multi-step transfer flow with buttons"""
     step = flow_state['step']
     data = flow_state.get('data', {})
     
     print(f"💸 Transfer Step {step}: {text}")
     
-    # Step 1: User selected source account
+    # === STEP 1: Select SOURCE account (buttons: FROM:xxx) ===
     if step == 1:
-        try:
-            acc = sh.worksheet("Accounts")
-            accounts = acc.get_all_values()[1:]
+        if text.startswith("FROM:"):
+            from_account = text[5:]  # Remove "FROM:" prefix
             
-            if text.isdigit():
-                account_idx = int(text) - 1
-            else:
-                for i, row in enumerate(accounts):
-                    if text.lower() in row[1].lower():
-                        account_idx = i
-                        break
-                else:
-                    account_idx = -1
-            
-            if account_idx < 0 or account_idx >= len(accounts):
-                reply = "⚠️ Invalid account. Please select 1-5 or type account name." if user_name != "prapa.yang" else "⚠️ บัญชไมถกตอง กรุณาเลือก 1-5 หรือพิมพชื่อบัญช"
-                send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
-                del user_flow_state[user_id]
-                return
-            
-            data['from_account'] = accounts[account_idx][1]
-            data['from_account_idx'] = account_idx
+            data['from_account'] = from_account
             
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 2, 'data': data}
             
-            reply = f"✅ From: {data['from_account']}\n\nSelect destination account (1-5 or name):" if user_name != "prapa.yang" else f"✅ จาก: {data['from_account']}\n\nเลอกบญชปลายทาง (1-5 หรอพมพชอ):"
-            # No Quick Reply during flow - user should continue typing
-            send_bank_response(user_id, user_name, reply, "transfer", None)
+            reply = f"✅ From: {from_account}\n\nWhere to transfer to?" if user_name != "prapa.yang" else f"✅ จาก: {from_account}\n\nตองการโอนไปบัญชีไหนครับ?"
+            # Show destination buttons (exclude source)
+            send_bank_response(user_id, user_name, reply, "transfer", get_transfer_dest_menu(user_name, from_account))
             return
-            
-        except Exception as e:
-            reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาด: {e}"
-            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
-            del user_flow_state[user_id]
+        else:
+            # User typed instead of clicking - treat as account name
+            data['from_account'] = text
+            user_flow_state[user_id] = {'flow': 'transfer', 'step': 2, 'data': data}
+            reply = f"✅ From: {text}\n\nWhere to transfer to?" if user_name != "prapa.yang" else f"✅ จาก: {text}\n\nตองการโอนไปบัญชีไหนครับ?"
+            send_bank_response(user_id, user_name, reply, "transfer", get_transfer_dest_menu(user_name, text))
             return
     
-    # Step 2: Destination account
+    # === STEP 2: Select DESTINATION account (buttons: TO:xxx) ===
     elif step == 2:
-        try:
-            acc = sh.worksheet("Accounts")
-            accounts = acc.get_all_values()[1:]
+        if text.startswith("TO:"):
+            to_account = text[3:]  # Remove "TO:" prefix
             
-            if text.isdigit():
-                account_idx = int(text) - 1
-            else:
-                for i, row in enumerate(accounts):
-                    if text.lower() in row[1].lower():
-                        account_idx = i
-                        break
-                else:
-                    account_idx = -1
-            
-            if account_idx < 0 or account_idx >= len(accounts):
-                reply = "⚠️ Invalid account. Please select 1-5 or type account name." if user_name != "prapa.yang" else "⚠️ บัญชไมถกตอง กรุณาเลือก 1-5 หรือพิมพชื่อบัญช"
-                send_bank_response(user_id, user_name, reply, "transfer")
+            # Check not same as source
+            if to_account == data.get('from_account'):
+                reply = "⚠️ Can't transfer to the same account. Please select a different one." if user_name != "prapa.yang" else "⚠️ ไมสามารถโอนไปบัญชีเดียวกันไดครับ กรุณาเลือกบัญชีใหม่นะครับ"
+                send_bank_response(user_id, user_name, reply, "transfer", get_transfer_dest_menu(user_name, data['from_account']))
                 return
             
-            if account_idx == data['from_account_idx']:
-                reply = "⚠️ Cannot transfer to same account. Select different account." if user_name != "prapa.yang" else "⚠️ ไมสามารถโอนไปบัญชเดียวกัน กรุณาเลือกบัญชใหม"
-                send_bank_response(user_id, user_name, reply, "transfer")
-                return
-            
-            data['to_account'] = accounts[account_idx][1]
-            data['to_account_idx'] = account_idx
+            data['to_account'] = to_account
             
             user_flow_state[user_id] = {'flow': 'transfer', 'step': 3, 'data': data}
             
-            reply = f"✅ To: {data['to_account']}\n\nHow much would you like to transfer?" if user_name != "prapa.yang" else f"✅ ไป: {data['to_account']}\n\nตองการโอนจำนวนเทาไหรครับ?"
-            # No Quick Reply during flow
-            send_bank_response(user_id, user_name, reply, "transfer", None)
+            reply = f"✅ To: {to_account}\n\nWhat's this transfer for?" if user_name != "prapa.yang" else f"✅ ไป: {to_account}\n\nโอนเงินนี้เพืออะไรครับ?"
+            # Show purpose suggestions
+            send_bank_response(user_id, user_name, reply, "transfer", get_purpose_menu(user_name))
             return
+        else:
+            # User typed destination
+            if text == data.get('from_account'):
+                reply = "⚠️ Can't transfer to the same account. Please select a different one." if user_name != "prapa.yang" else "⚠️ ไมสามารถโอนไปบัญชีเดียวกันไดครับ"
+                send_bank_response(user_id, user_name, reply, "transfer", get_transfer_dest_menu(user_name, data['from_account']))
+                return
             
-        except Exception as e:
-            reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาด: {e}"
-            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
-            del user_flow_state[user_id]
+            data['to_account'] = text
+            user_flow_state[user_id] = {'flow': 'transfer', 'step': 3, 'data': data}
+            reply = f"✅ To: {text}\n\nWhat's this transfer for?" if user_name != "prapa.yang" else f"✅ ไป: {text}\n\nโอนเงินนี้เพืออะไรครับ?"
+            send_bank_response(user_id, user_name, reply, "transfer", get_purpose_menu(user_name))
             return
     
-    # Step 3: Amount
+    # === STEP 3: Purpose (buttons: PURPOSE:xxx or custom text) ===
     elif step == 3:
+        if text.startswith("PURPOSE:"):
+            purpose = text[8:]  # Remove "PURPOSE:" prefix
+            data['purpose'] = purpose
+        else:
+            data['purpose'] = text
+        
+        user_flow_state[user_id] = {'flow': 'transfer', 'step': 4, 'data': data}
+        
+        reply = "💰 How much would you like to transfer? (just type the number)" if user_name != "prapa.yang" else "💰 ตองการโอนจำนวนเทาไหรครับ? (พิมพเฉพาะตัวเลข)"
+        # No buttons - user types amount
+        send_bank_response(user_id, user_name, reply, "transfer", None)
+        return
+    
+    # === STEP 4: Amount (user types number) ===
+    elif step == 4:
         try:
             amount = float(text.replace(',', ''))
             if amount <= 0:
@@ -367,29 +407,13 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             
             data['amount'] = amount
             
-            user_flow_state[user_id] = {'flow': 'transfer', 'step': 4, 'data': data}
-            
-            reply = f"💰 Amount: {amount:,.2f} NTD\n\nWhat's this transfer for? (e.g., Family dinner, Emergency, etc.)" if user_name != "prapa.yang" else f"💰 จำนวน: {amount:,.2f} บาท\n\nโอนเงินนี้เพืออะไรครับ? (เช่น ค่าอาหารครอบครัว, เรงดวน, ฯลฯ)"
-            # No Quick Reply during flow
-            send_bank_response(user_id, user_name, reply, "transfer", None)
-            return
-            
-        except ValueError:
-            reply = "Hmm, that doesn't look like an amount. Could you enter just the number? (e.g., 1000)" if user_name != "prapa.yang" else "ขอโทษครับ ดูเหมือนยังไมใชจำนวนเงิน กรุณาใสเฉพาะตัวเลขครับ (เช่น 1000)"
-            send_bank_response(user_id, user_name, reply, "transfer", None)
-            return
-    
-    # Step 4: Purpose - CREATE APPROVAL REQUEST
-    elif step == 4:
-        try:
-            data['purpose'] = text
-            
+            # CREATE APPROVAL REQUEST
             from approval_workflow import create_request
             request_id, approver = create_request(
                 sh,
                 user_id,
                 user_name,
-                'transfer',
+                'Transfer',
                 data['purpose'],
                 amount=data['amount'],
                 from_acc=data['from_account'],
@@ -402,20 +426,19 @@ def handle_transfer_step(user_id, user_name, text, flow_state):
             
             send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
             
-            # TODO: Send notification to approver (Prapa/Jack)
+            # TODO: Send notification to approver
             
             return
             
-        except Exception as e:
-            reply = f"⚠️ Error creating request: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาดในการสรางคำขอ: {e}"
-            send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
-            del user_flow_state[user_id]
+        except ValueError:
+            reply = "Hmm, that doesn't look like an amount. Could you enter just the number? (e.g., 1000)" if user_name != "prapa.yang" else "ขอโทษครับ ดูเหมือนยังไมใชจำนวนเงิน กรุณาใสเฉพาะตัวเลขครับ (เช่น 1000)"
+            send_bank_response(user_id, user_name, reply, "transfer", None)
             return
     
     # Unknown step - reset
     else:
         del user_flow_state[user_id]
-        reply = "⚠️ Transfer session expired. Please start over." if user_name != "prapa.yang" else "⚠️ รายการโอนหมดเวลา กรุณาเรมใหม"
+        reply = "⚠️ Transfer session expired. Please start over." if user_name != "prapa.yang" else "⚠️ รายการโอนหมดเวลา กรุณาเรมใหม่นะครับ"
         send_bank_response(user_id, user_name, reply, "transfer", get_main_menu(user_name))
 
 def send_bank_response(user_id, user_name, main_text, followup_context="general", quick_reply=None):
@@ -784,7 +807,7 @@ def handle_text(event):
         send_bank_response(user_id, user_name, reply, "general")
         return
     
-    # === TRANSFER BETWEEN ACCOUNTS (4-STEP FLOW) ===
+    # === TRANSFER BETWEEN ACCOUNTS (BUTTON FLOW) ===
     if text == "Transfer between accounts" or text == "โอนระหวางบญช":
         if gc:
             try:
@@ -804,10 +827,10 @@ def handle_text(event):
                 # Send with account selection buttons
                 send_bank_response(user_id, user_name, reply, "transfer", get_transfer_source_menu(user_name))
             except Exception as e:
-                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
+                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผิดพลาด: {e}"
                 send_bank_response(user_id, user_name, reply, "transfer")
         else:
-            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเชื่อมตอได"
             send_bank_response(user_id, user_name, reply, "transfer")
         return
     # === EXPENSE LOGGING (AI Categorization) ===
