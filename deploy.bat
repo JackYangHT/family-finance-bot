@@ -1,5 +1,26 @@
 @echo off
-echo Deploying to Google Cloud Run...
+echo ============================================
+echo  Deploying Yang Family Finance Bot
+echo  to Google Cloud Run
+echo ============================================
+echo.
+
+cd /d "%~dp0"
+
+echo Current directory: %CD%
+echo.
+
+echo Checking gcloud installation...
+where gcloud >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: gcloud not found in PATH!
+    echo Please make sure Google Cloud CLI is installed.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo gcloud found. Starting deployment...
 echo.
 
 gcloud run deploy family-finance-bot ^
@@ -14,5 +35,14 @@ gcloud run deploy family-finance-bot ^
   --port 8080
 
 echo.
-echo Deployment complete!
-pause
+echo ============================================
+if %ERRORLEVEL% EQU 0 (
+    echo  DEPLOYMENT SUCCESSFUL!
+    echo  Copy the Service URL above and share it.
+) else (
+    echo  DEPLOYMENT FAILED - Check errors above.
+)
+echo ============================================
+echo.
+echo Press any key to exit...
+pause >nul

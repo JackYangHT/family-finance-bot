@@ -22,6 +22,10 @@ from linebot.models import (
 from openai import OpenAI
 import gspread
 from google.oauth2.service_account import Credentials
+from approval_workflow import (
+    create_request, get_pending_approvals, approve_request, reject_request,
+    format_approval_message
+)
 
 app = FastAPI()
 
@@ -99,6 +103,8 @@ def get_main_menu(user_name):
             QuickReplyButton(action=MessageAction(label="🏦 เปดบญช", text="เปดบญชใหม")),
             QuickReplyButton(action=MessageAction(label="💸 โอนเงิน", text="โอนระหวางบญช")),
             QuickReplyButton(action=MessageAction(label="📊 ยอดคงเหลอ", text="ตรวจสอบยอด")),
+            QuickReplyButton(action=MessageAction(label="📋 งบประมาณ", text="ตังงบประมาณ")),
+            QuickReplyButton(action=MessageAction(label="⚖️ อนุมัติรายการ", text="ตรวจสอบคำขออนุมัต")),
         ])
     else:
         return QuickReply(items=[
@@ -107,6 +113,8 @@ def get_main_menu(user_name):
             QuickReplyButton(action=MessageAction(label="🏦 Open Account", text="Open new account")),
             QuickReplyButton(action=MessageAction(label="💸 Transfer", text="Transfer between accounts")),
             QuickReplyButton(action=MessageAction(label="📊 Balance", text="Check balance")),
+            QuickReplyButton(action=MessageAction(label="📋 Budget", text="Set budget")),
+            QuickReplyButton(action=MessageAction(label="⚖️ Approvals", text="Check pending approvals")),
         ])
 
 def get_expense_menu(user_name):
@@ -132,12 +140,15 @@ def get_polite_followup(user_name, context="general"):
     """Polite follow-up question - Bank call center style"""
     if user_name == "prapa.yang":
         followups = {
-            "greeting": "มีอะไรให้อารยาชวยวันนี้บอกไดเลยครับ",
-            "expense": "มีรายจ่ายอ่นๆ ตองการบันทกเพ่มเตมไหมครับ? พมพขอมูลเชน 'รานครำานวน' ไดเลยครับ",
-            "balance": "ตองการทราบขอมูลเพ่มเตมดานไหนอีกไหมครับ? ยินดใหบรการตลอด 24 ชั่โมงครับ",
-            "salary": "มสลิปเงนเดอนของเดอนหนาทจะอัปโหลดไหมครับ? หรอมีขอสงสยตองการถามเพ่มเตมไหมครับ",
-            "transfer": "ตองการโอนเงินเพ่มเตมไหมครับ? หรอมีธุระกรรมอ่นๆ ทให้อารยาชวยไหมครับ",
-            "general": "มีขอสงสยอ่นๆ หรอตองการบันทกรายจ่ายเพ่มเตมไหมครับ? ยินดใหบรการครับ"
+            "greeting": "มีอะไรให้อารยาช่วยวันนี้บอกได้เลยครับ",
+            "expense": "มีรายจ่ายอื่นๆ ต้องการบันทึกเพิ่มเติมไหมครับ? พิมพ์ข้อมูลเช่น 'ร้านจำนวน' ได้เลยครับ",
+            "balance": "ต้องการทราบข้อมูลเพิ่มเติมด้านไหนอีกไหมครับ? ยินดีให้บริการตลอด 24 ชั่วโมงครับ",
+            "salary": "มีสลิปเงินเดือนของเดือนหน้าที่จะอัปโหลดไหมครับ? หรือมีข้อสงสัยต้องการถามเพิ่มเติมไหมครับ",
+            "transfer": "ต้องการโอนเงินเพิ่มเติมไหมครับ? หรือมีธุรกรรมอื่นๆ ที่ให้อารยาช่วยไหมครับ",
+            "budget": "ต้องการตั้งงบประมาณเพิ่มเติมไหมครับ? หรือมีคำถามเกี่ยวกับการใช้จ่ายไหมครับ",
+            "approval_pending": "อารยาจะแจ้งคุณแจ๊คให้อนุมัติครับ รอการยืนยันสักครู่นะครับ",
+            "approval_required": "คุณแจ๊คต้องอนุมัติก่อนดำเนินการครับ อารยาจะส่งคำขอไปให้คุณแจ๊คครับ",
+            "general": "มีข้อสงสัยอื่นๆ หรือต้องการบันทึกรายจ่ายเพิ่มเติมไหมครับ? ยินดีให้บริการครับ"
         }
         return followups.get(context, followups["general"])
     else:
@@ -147,6 +158,9 @@ def get_polite_followup(user_name, context="general"):
             "balance": "Would you like more details on any category?",
             "salary": "Do you have more salary slips to upload?",
             "transfer": "Any other transfers or transactions today?",
+            "budget": "Would you like to set more budgets or check spending limits?",
+            "approval_pending": "I've sent a notification to Prapa for approval. She'll be notified shortly.",
+            "approval_required": "This requires Prapa's approval. I'll send her a notification now.",
             "general": "Any other questions or expenses to log today?"
         }
         return followups.get(context, followups["general"])
@@ -301,7 +315,94 @@ def handle_text(event):
             send_bank_response(user_id, user_name, reply, "balance")
         return
     
-    # === OPEN NEW ACCOUNT ===
+    # === CHECK PENDING APPROVALS ===
+    if text == "Check pending approvals" or text == "ตรวจสอบคำขออนุมัต":
+        if gc:
+            pending = get_pending_approvals(sh, user_name)
+            
+            if not pending:
+                if user_name == "prapa.yang":
+                    reply = "✅ ไมมคำขออนุมัตคงคางครับ - รายการทงหมดไดรบอนุมัตแลวครับ"
+                else:
+                    reply = "✅ No pending approvals - all requests have been processed."
+            else:
+                if user_name == "prapa.yang":
+                    reply = f"⚖️ **ม {len(pending)} คำขออนุมัตคงคาง**\n\n"
+                else:
+                    reply = f"⚖️ **{len(pending)} Pending Approval(s)**\n\n"
+                
+                for req in pending[:3]:  # Show first 3
+                    reply += format_approval_message(req, user_name) + "\n\n"
+                    # Add approve/reject buttons inline
+                    if user_name == "prapa.yang":
+                        reply += "พมพ 'อนุมัต {request_id}' หรอ 'ปฏเสธ {request_id}'\n"
+                    else:
+                        reply += f"Type 'Approve {req['request_id']}' or 'Reject {req['request_id']}'\n"
+                    reply += "─" * 40 + "\n"
+            
+            send_bank_response(user_id, user_name, reply, "general", get_main_menu(user_name))
+        else:
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    # === APPROVE/REJECT REQUESTS ===
+    if text.lower().startswith("approve") or text.lower().startswith("อนุมัต"):
+        req_id = text.split()[-1] if len(text.split()) > 1 else None
+        if req_id and gc:
+            success, status = approve_request(sh, req_id, user_name)
+            if success:
+                if user_name == "prapa.yang":
+                    reply = f"✅ อนุมัตคำขอ {req_id} เรยรอยครับ - ทำรายการแลว!"
+                else:
+                    reply = f"✅ Request {req_id} approved - transaction executed!"
+            else:
+                reply = f"⚠️ Failed to approve {req_id}" if user_name != "prapa.yang" else f"⚠️ ไมสามารถอนุมัตได"
+        else:
+            reply = "Please specify request ID. Example: 'Approve REQ20260817...'" if user_name != "prapa.yang" else "กรุณาระบุรหัสคำขอ เช่น 'อนุมัต REQ20260817...'"
+        send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    if text.lower().startswith("reject") or text.lower().startswith("ปฏเสธ"):
+        req_id = text.split()[-1] if len(text.split()) > 1 else None
+        if req_id and gc:
+            success, status = reject_request(sh, req_id, user_name, "Rejected by approver")
+            if success:
+                if user_name == "prapa.yang":
+                    reply = f"❌ ปฏเสธคำขอ {req_id} เรยรอยครับ"
+                else:
+                    reply = f"❌ Request {req_id} rejected."
+            else:
+                reply = f"⚠️ Failed to reject {req_id}" if user_name != "prapa.yang" else f"⚠️ ไมสามารถปฏเสธได"
+        else:
+            reply = "Please specify request ID. Example: 'Reject REQ20260817...'" if user_name != "prapa.yang" else "กรุณาระบุรหัสคำขอ เช่น 'ปฏเสธ REQ20260817...'"
+        send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    # === SET BUDGET (Requires Approval) ===
+    if text == "Set budget" or text == "ตังงบประมาณ":
+        if user_name == "prapa.yang":
+            reply = (
+                "📋 **ตังงบประมาณ**\n\n"
+                "อารยาชวยบอกขอมูลครับ:\n"
+                "1. หมวดหมู่? (Family/Personal/Urgent/Food/Transport)\n"
+                "2. จำนวนเงินตอเดือน?\n"
+                "3. หมายเหตุ (ถาม)\n\n"
+                "⚠️ คุณแจ๊คตองอนุมัตกอนใชงานครับ"
+            )
+        else:
+            reply = (
+                "📋 **Set Budget**\n\n"
+                "Please provide:\n"
+                "1. Category? (Family/Personal/Urgent/Food/Transport)\n"
+                "2. Monthly amount?\n"
+                "3. Notes (optional)\n\n"
+                "⚠️ This requires Prapa's approval before activation."
+            )
+        send_bank_response(user_id, user_name, reply, "budget")
+        return
+    
+    # === OPEN NEW ACCOUNT (Requires Approval) ===
     if text == "Open new account" or text == "เปดบญชใหม":
         if user_name == "prapa.yang":
             reply = (
@@ -310,7 +411,8 @@ def handle_text(event):
                 "1. ชื่อบญชทตองการ?\n"
                 "2. ประเภทบญช? (กระเป๋า/ธนาคาร)\n"
                 "3. เงินเรมตนเทาไร?\n"
-                "4. เปดเพออะไรครับ?"
+                "4. เปดเพออะไรครับ?\n\n"
+                "⚠️ คุณแจ๊คตองอนุมัตกอนเปดบญชครับ"
             )
         else:
             reply = (
@@ -319,9 +421,33 @@ def handle_text(event):
                 "1. Account name?\n"
                 "2. Account type? (Pocket/Bank)\n"
                 "3. Initial deposit?\n"
-                "4. Purpose?"
+                "4. Purpose?\n\n"
+                "⚠️ This requires Prapa's approval before creation."
             )
         send_bank_response(user_id, user_name, reply, "general")
+        return
+    
+    # === TRANSFER (Requires Approval) ===
+    if text == "Transfer between accounts" or text == "โอนระหวางบญช":
+        if gc:
+            try:
+                acc = sh.worksheet("Accounts")
+                accounts = acc.get_all_values()[1:]  # Skip header
+                
+                if user_name == "prapa.yang":
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
+                    reply = f"📋 **บญชทมี**:\n\n{acc_list}\n\nเลอกบญชทตองการโอนครับ\n⚠️ คุณแจ๊คตองอนุมัตกอนโอนครับ"
+                else:
+                    acc_list = "\n".join([f"{i+1}. {row[1]} ({row[3]})" for i, row in enumerate(accounts) if row])
+                    reply = f"📋 **Available Accounts**:\n\n{acc_list}\n\nSelect account to transfer from.\n⚠️ This requires Prapa's approval."
+                
+                send_bank_response(user_id, user_name, reply, "transfer")
+            except Exception as e:
+                reply = f"⚠️ Error: {e}" if user_name != "prapa.yang" else f"⚠️ ผดพลาด: {e}"
+                send_bank_response(user_id, user_name, reply, "transfer")
+        else:
+            reply = "⚠️ Database offline" if user_name != "prapa.yang" else "⚠️ ฐานขอมูลไมสามารถเช่อมตอได"
+            send_bank_response(user_id, user_name, reply, "transfer")
         return
     
     # === TRANSFER BETWEEN ACCOUNTS ===
