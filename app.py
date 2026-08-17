@@ -28,6 +28,14 @@ from approval_workflow import (
 )
 from flex_message_templates import create_approval_card, create_receipt_confirmation_card
 
+# Print startup debug info
+print("🚀 Yang Family Finance Bot starting...")
+print(f"  PORT: {os.environ.get('PORT', '8080')}")
+print(f"  LINE_CHANNEL_ID: {'SET' if os.environ.get('LINE_CHANNEL_ID') else 'MISSING'}")
+print(f"  LINE_CHANNEL_SECRET: {'SET' if os.environ.get('LINE_CHANNEL_SECRET') else 'MISSING'}")
+print(f"  DEEPINFRA_API_KEY: {'SET' if os.environ.get('DEEPINFRA_API_KEY') else 'MISSING'}")
+print(f"  GOOGLE_APPLICATION_CREDENTIALS: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', 'NOT SET')}")
+
 app = FastAPI()
 
 # =============================================================================
